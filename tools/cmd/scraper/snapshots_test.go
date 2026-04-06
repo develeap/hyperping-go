@@ -62,7 +62,9 @@ func writeSpec(t *testing.T, spec *openapi.Spec) string {
 	if err != nil {
 		t.Fatalf("create temp file: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("close temp file: %v", err)
+	}
 	if err := openapi.Save(spec, f.Name()); err != nil {
 		t.Fatalf("save spec: %v", err)
 	}

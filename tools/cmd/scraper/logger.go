@@ -84,17 +84,17 @@ func (l *Logger) log(level LogLevel, message string, fields map[string]interface
 		data, err := json.Marshal(entry)
 		if err != nil {
 			// Fallback to simple output on marshal error
-			fmt.Fprintf(l.output, "[%s] %s: %s\n", entry.Timestamp, entry.Level, entry.Message)
+			_, _ = fmt.Fprintf(l.output, "[%s] %s: %s\n", entry.Timestamp, entry.Level, entry.Message)
 			return
 		}
-		fmt.Fprintln(l.output, string(data))
+		_, _ = fmt.Fprintln(l.output, string(data))
 	} else {
 		// Text format with optional fields
 		output := fmt.Sprintf("[%s] %s: %s", entry.Timestamp, entry.Level, entry.Message)
 		if len(fields) > 0 {
 			output += fmt.Sprintf(" %v", fields)
 		}
-		fmt.Fprintln(l.output, output)
+		_, _ = fmt.Fprintln(l.output, output)
 	}
 }
 

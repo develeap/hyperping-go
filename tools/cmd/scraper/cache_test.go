@@ -273,8 +273,12 @@ func TestBuildCacheFromDisk(t *testing.T) {
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
-	savePageData(filepath.Join(tmpDir, "page1.json"), page1)
-	savePageData(filepath.Join(tmpDir, "page2.json"), page2)
+	if err := savePageData(filepath.Join(tmpDir, "page1.json"), page1); err != nil {
+		t.Fatalf("savePageData page1: %v", err)
+	}
+	if err := savePageData(filepath.Join(tmpDir, "page2.json"), page2); err != nil {
+		t.Fatalf("savePageData page2: %v", err)
+	}
 
 	cache, err := BuildCacheFromDisk(tmpDir)
 	if err != nil {
