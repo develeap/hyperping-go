@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/develeap/terraform-provider-hyperping/tools/scraper/openapi"
+	"github.com/develeap/hyperping-go/tools/cmd/scraper/openapi"
 )
 
 // makeMonitorSpec builds a minimal spec with POST /v1/monitors whose request body
