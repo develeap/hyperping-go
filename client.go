@@ -548,10 +548,11 @@ func (c *Client) doRequestWithRetry(ctx context.Context, method, path string, bo
 		return err
 	}
 
-	// POST requests are not idempotent: retrying after a server-side failure
-	// may create duplicate resources. Only retry idempotent methods.
+	// POST and PATCH are not idempotent: retrying after a server-side failure
+	// may create duplicate resources or apply a partial update twice.
+	// Only retry idempotent methods (GET, PUT, DELETE, HEAD).
 	effectiveMaxRetries := c.maxRetries
-	if method == http.MethodPost {
+	if method == http.MethodPost || method == http.MethodPatch {
 		effectiveMaxRetries = 0
 	}
 

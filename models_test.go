@@ -196,18 +196,21 @@ func TestMonitor_UnmarshalJSON_escalationPolicy(t *testing.T) {
 	tests := []struct {
 		name     string
 		json     string
-		wantUUID string // empty string means nil
+		wantUUID string // empty string means nil EscalationPolicy
+		wantName string // only checked when wantUUID is non-empty
 		wantErr  bool
 	}{
 		{
 			name:     "object shape (real API GET response)",
 			json:     `{"uuid":"mon_1","name":"test","url":"https://example.com","protocol":"HTTPS","http_method":"GET","check_frequency":60,"follow_redirects":true,"expected_status_code":"200","escalation_policy":{"uuid":"policy_abc123","name":"Core-Escalation"}}`,
 			wantUUID: "policy_abc123",
+			wantName: "Core-Escalation",
 		},
 		{
 			name:     "plain string (legacy / write path)",
 			json:     `{"uuid":"mon_1","name":"test","url":"https://example.com","protocol":"HTTPS","http_method":"GET","check_frequency":60,"follow_redirects":true,"expected_status_code":"200","escalation_policy":"policy_abc123"}`,
 			wantUUID: "policy_abc123",
+			wantName: "", // plain string shape carries no name
 		},
 		{
 			name:     "null value",
@@ -253,8 +256,13 @@ func TestMonitor_UnmarshalJSON_escalationPolicy(t *testing.T) {
 			} else {
 				if m.EscalationPolicy == nil {
 					t.Errorf("expected EscalationPolicy.UUID = %q, got nil", tt.wantUUID)
-				} else if m.EscalationPolicy.UUID != tt.wantUUID {
-					t.Errorf("EscalationPolicy.UUID = %q, want %q", m.EscalationPolicy.UUID, tt.wantUUID)
+				} else {
+					if m.EscalationPolicy.UUID != tt.wantUUID {
+						t.Errorf("EscalationPolicy.UUID = %q, want %q", m.EscalationPolicy.UUID, tt.wantUUID)
+					}
+					if m.EscalationPolicy.Name != tt.wantName {
+						t.Errorf("EscalationPolicy.Name = %q, want %q", m.EscalationPolicy.Name, tt.wantName)
+					}
 				}
 			}
 		})

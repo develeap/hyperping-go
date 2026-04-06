@@ -1,4 +1,4 @@
-module github.com/develeap/terraform-provider-hyperping/tools/scraper
+module github.com/develeap/hyperping-go/tools/cmd/scraper
 
 go 1.26
 

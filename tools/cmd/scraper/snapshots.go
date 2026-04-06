@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/develeap/terraform-provider-hyperping/tools/scraper/openapi"
-	"github.com/develeap/terraform-provider-hyperping/tools/scraper/utils"
+	"github.com/develeap/hyperping-go/tools/cmd/scraper/openapi"
+	"github.com/develeap/hyperping-go/tools/cmd/scraper/utils"
 )
 
 // SnapshotManager handles storing and retrieving OpenAPI YAML snapshots.
