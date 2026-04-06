@@ -1,0 +1,214 @@
+name: API Documentation Scraper
+
+on:
+  schedule:
+    - cron: '17 1 * * *'
+    - cron: '17 5 * * *'
+    - cron: '17 9 * * *'
+    - cron: '17 13 * * *'
+    - cron: '17 17 * * *'
+    - cron: '17 21 * * *'
+
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode'
+        required: false
+        default: 'scrape-and-analyze'
+        type: choice
+        options:
+          - scrape-and-analyze
+          - scrape-only
+          - analyze-only
+      log_level:
+        description: 'Log level'
+        required: false
+        default: 'info'
+        type: choice
+        options:
+          - debug
+          - info
+          - warn
+          - error
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: ${{ github.event.inputs.mode != 'analyze-only' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: 'tools/cmd/scraper/go.mod'
+          cache-dependency-path: tools/cmd/scraper/go.sum
+
+      - name: Restore cache and snapshots
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: |
+            tools/cmd/scraper/.scraper_cache.json
+            tools/cmd/scraper/snapshots/
+            tools/cmd/scraper/docs_scraped/
+          key: scraper-data-${{ github.run_id }}
+          restore-keys: |
+            scraper-data-
+
+      - name: Build scraper
+        working-directory: tools/cmd/scraper
+        run: go build -o scraper
+
+      - name: Run scraper
+        working-directory: tools/cmd/scraper
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO_NAME: ${{ github.event.repository.name }}
+          LOG_FORMAT: json
+          LOG_LEVEL: ${{ inputs.log_level || 'info' }}
+          CHROME_BIN: google-chrome-stable
+        run: |
+          ./scraper 2>&1 | tee scraper.log
+          echo "EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
+
+      - name: Upload scraper logs
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v6.0.0
+        with:
+          name: scraper-logs-${{ github.run_id }}
+          path: tools/cmd/scraper/scraper.log
+          retention-days: 30
+
+      - name: Upload diff reports
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v6.0.0
+        with:
+          name: diff-reports-${{ github.run_id }}
+          path: tools/cmd/scraper/api_changes_*.md
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Upload scraped data
+        if: success()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v6.0.0
+        with:
+          name: scraped-data-${{ github.run_id }}
+          path: tools/cmd/scraper/docs_scraped/
+          retention-days: 7
+
+      - name: Check for failures
+        if: env.EXIT_CODE != '0'
+        run: |
+          echo "Scraper failed with exit code $EXIT_CODE"
+          exit 1
+
+      - name: Post summary
+        if: always()
+        run: |
+          cd tools/cmd/scraper
+          echo "## Scraper Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          echo "**Run Number:** ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Exit Code:** ${EXIT_CODE:-unknown}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f scraper.log ]; then
+            echo "### Metrics" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -E "(Scraped|Skipped|Failed|Duration|Cache)" scraper.log | head -20 >> $GITHUB_STEP_SUMMARY || echo "No metrics found" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+          if ls api_changes_*.md 1> /dev/null 2>&1; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### API Changes Detected" >> $GITHUB_STEP_SUMMARY
+            for file in api_changes_*.md; do
+              echo "- $file" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### No API Changes" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [scrape]
+    if: ${{ always() && (needs.scrape.result == 'success' || github.event.inputs.mode == 'analyze-only') && github.event.inputs.mode != 'scrape-only' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: tools/cmd/scraper/go.mod
+          cache-dependency-path: tools/cmd/scraper/go.sum
+
+      - name: Restore snapshots from cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: |
+            tools/cmd/scraper/.scraper_cache.json
+            tools/cmd/scraper/snapshots/
+            tools/cmd/scraper/docs_scraped/
+          key: scraper-data-${{ github.run_id }}
+          restore-keys: |
+            scraper-data-
+
+      - name: Build scraper
+        working-directory: tools/cmd/scraper
+        run: go build -o scraper
+
+      - name: Run coverage analysis
+        working-directory: tools/cmd/scraper
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO_NAME: ${{ github.event.repository.name }}
+          LOG_LEVEL: ${{ inputs.log_level || 'info' }}
+        run: |
+          ./scraper -analyze -snapshot-dir=./snapshots 2>&1 | tee analyze.log
+          exit 0
+
+      - name: Upload analysis logs
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v6.0.0
+        with:
+          name: analysis-logs-${{ github.run_id }}
+          path: tools/cmd/scraper/analyze.log
+          retention-days: 30
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v6.0.0
+        with:
+          name: coverage-report-${{ github.run_id }}
+          path: tools/cmd/scraper/coverage_report*.md
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Post analysis summary
+        if: always()
+        run: |
+          cd tools/cmd/scraper
+          echo "## Coverage Analysis Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          REPORT=$(ls -t coverage_report_*.md 2>/dev/null | head -1)
+          if [ -n "$REPORT" ]; then
+            cat "$REPORT" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No coverage report generated." >> $GITHUB_STEP_SUMMARY
+          fi
