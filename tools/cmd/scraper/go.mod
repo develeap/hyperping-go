@@ -10,7 +10,7 @@ require (
 	github.com/google/go-github/v68 v68.0.0
 	github.com/hashicorp/terraform-json v0.27.2
 	github.com/oasdiff/kin-openapi v0.136.10
-	github.com/oasdiff/oasdiff v1.13.1
+	github.com/oasdiff/oasdiff v1.14.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -21,6 +21,7 @@ require (
 	github.com/TwiN/go-color v1.4.1 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
+	github.com/getkin/kin-openapi v0.135.0 // indirect
 	github.com/go-openapi/jsonpointer v0.22.5 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
@@ -46,6 +47,6 @@ require (
 	github.com/ysmood/leakless v0.9.0 // indirect
 	github.com/zclconf/go-cty v1.18.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/text v0.36.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 )
