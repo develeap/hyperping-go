@@ -6,10 +6,10 @@ toolchain go1.26.1
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
+	github.com/getkin/kin-openapi v0.135.0
 	github.com/go-rod/rod v0.116.2
 	github.com/google/go-github/v68 v68.0.0
 	github.com/hashicorp/terraform-json v0.27.2
-	github.com/oasdiff/kin-openapi v0.136.10
 	github.com/oasdiff/oasdiff v1.14.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/time v0.15.0
@@ -21,7 +21,6 @@ require (
 	github.com/TwiN/go-color v1.4.1 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
-	github.com/getkin/kin-openapi v0.135.0 // indirect
 	github.com/go-openapi/jsonpointer v0.22.5 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
