@@ -55,6 +55,7 @@ func (r CreateIncidentRequest) Validate() error {
 // API: PUT /v3/incidents/{uuid}
 type UpdateIncidentRequest struct {
 	Title              *LocalizedText             `json:"title,omitempty"`
+	Text               *LocalizedText             `json:"text,omitempty"`
 	Type               *string                    `json:"type,omitempty"`
 	AffectedComponents *[]string                  `json:"affectedComponents,omitempty"`
 	StatusPages        *[]string                  `json:"statuspages,omitempty"`
