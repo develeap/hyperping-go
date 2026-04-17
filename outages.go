@@ -43,8 +43,9 @@ func parseOutageListResponse(raw json.RawMessage) (outageListResponse, error) {
 		return outageListResponse{Outages: wrapped.Data, HasNextPage: wrapped.HasNextPage}, nil
 	}
 
-	// Empty response
-	return outageListResponse{Outages: []Outage{}, HasNextPage: false}, nil
+	// Empty response - preserve HasNextPage from the wrapped struct so that
+	// responses like {"outages": [], "hasNextPage": true} continue paginating.
+	return outageListResponse{Outages: []Outage{}, HasNextPage: wrapped.HasNextPage}, nil
 }
 
 // GetOutage retrieves a single outage by UUID.

@@ -83,9 +83,9 @@ func parseMaintenanceListResponse(raw json.RawMessage) (maintenanceListResponse,
 		return maintenanceListResponse{Maintenance: wrapped.Maintenance, HasNextPage: wrapped.HasNextPage}, nil
 	}
 
-	// Empty response - check if it's wrapped but empty
-	// This handles {"maintenanceWindows": [], "hasNextPage": false, "total": 0}
-	return maintenanceListResponse{Maintenance: []Maintenance{}, HasNextPage: false}, nil
+	// Empty response - preserve HasNextPage from the wrapped struct so that
+	// responses like {"maintenanceWindows": [], "hasNextPage": true} continue paginating.
+	return maintenanceListResponse{Maintenance: []Maintenance{}, HasNextPage: wrapped.HasNextPage}, nil
 }
 
 // GetMaintenance returns a single maintenance window by UUID.

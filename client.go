@@ -176,7 +176,8 @@ func newCircuitBreaker(c *Client) *gobreaker.CircuitBreaker {
 			return float64(counts.TotalFailures)/float64(counts.Requests) >= 0.6
 		},
 		OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 			if c.logger != nil {
 				c.logger.Debug(ctx, "circuit breaker state change", map[string]interface{}{
 					"name": name,
