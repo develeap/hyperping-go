@@ -5,7 +5,7 @@ package hyperping
 
 // Package-level test pointer helpers.
 
-func boolPtr(b bool) *bool    { return &b }
-func strPtr(s string) *string { return &s }
+func boolPtr(b bool) *bool       { return &b }
+func strPtr(s string) *string    { return &s }
 func stringPtr(s string) *string { return &s }
-func intPtr(i int) *int       { return &i }
+func intPtr(i int) *int          { return &i }
