@@ -42,7 +42,7 @@ func (c *MCPClient) GetStatusSummary(ctx context.Context) (*StatusSummary, error
 
 	var summary StatusSummary
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &summary)
+		_ = json.Unmarshal(bytes, &summary)
 	}
 	return &summary, nil
 }
@@ -61,7 +61,7 @@ func (c *MCPClient) GetMonitorResponseTime(ctx context.Context, monitorUUID stri
 
 	var report ResponseTimeReport
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &report)
+		_ = json.Unmarshal(bytes, &report)
 	}
 	return &report, nil
 }
@@ -85,7 +85,7 @@ func (c *MCPClient) GetMonitorMtta(ctx context.Context, monitorUUID string) (*Mt
 
 	var report MttaReport
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &report)
+		_ = json.Unmarshal(bytes, &report)
 	}
 	return &report, nil
 }
@@ -109,7 +109,7 @@ func (c *MCPClient) GetMonitorMttr(ctx context.Context, monitorUUID string) (*Mt
 
 	var report MttrReport
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &report)
+		_ = json.Unmarshal(bytes, &report)
 	}
 	return &report, nil
 }
@@ -141,7 +141,7 @@ func (c *MCPClient) GetMonitorAnomalies(ctx context.Context, monitorUUID string)
 		}
 		var anomaly MonitorAnomaly
 		if bytes, err := json.Marshal(amap); err == nil {
-			json.Unmarshal(bytes, &anomaly)
+			_ = json.Unmarshal(bytes, &anomaly)
 		}
 		anomalies = append(anomalies, anomaly)
 	}
@@ -162,7 +162,7 @@ func (c *MCPClient) GetMonitorHttpLogs(ctx context.Context, monitorUUID string) 
 
 	var response ProbeLogResponse
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &response)
+		_ = json.Unmarshal(bytes, &response)
 	}
 	return &response, nil
 }
@@ -183,7 +183,7 @@ func (c *MCPClient) ListRecentAlerts(ctx context.Context) (*AlertHistory, error)
 
 	var history AlertHistory
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &history)
+		_ = json.Unmarshal(bytes, &history)
 	}
 	return &history, nil
 }
@@ -215,7 +215,7 @@ func (c *MCPClient) ListOnCallSchedules(ctx context.Context) ([]OnCallSchedule, 
 		}
 		var schedule OnCallSchedule
 		if bytes, err := json.Marshal(smap); err == nil {
-			json.Unmarshal(bytes, &schedule)
+			_ = json.Unmarshal(bytes, &schedule)
 		}
 		schedules = append(schedules, schedule)
 	}
@@ -236,7 +236,7 @@ func (c *MCPClient) GetOnCallSchedule(ctx context.Context, uuid string) (*OnCall
 
 	var schedule OnCallSchedule
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &schedule)
+		_ = json.Unmarshal(bytes, &schedule)
 	}
 	return &schedule, nil
 }
@@ -263,7 +263,7 @@ func (c *MCPClient) ListEscalationPolicies(ctx context.Context) ([]EscalationPol
 		}
 		var policy EscalationPolicy
 		if bytes, err := json.Marshal(pmap); err == nil {
-			json.Unmarshal(bytes, &policy)
+			_ = json.Unmarshal(bytes, &policy)
 		}
 		policies = append(policies, policy)
 	}
@@ -284,7 +284,7 @@ func (c *MCPClient) GetEscalationPolicy(ctx context.Context, uuid string) (*Esca
 
 	var policy EscalationPolicy
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &policy)
+		_ = json.Unmarshal(bytes, &policy)
 	}
 	return &policy, nil
 }
@@ -311,7 +311,7 @@ func (c *MCPClient) ListTeamMembers(ctx context.Context) ([]TeamMember, error) {
 		}
 		var member TeamMember
 		if bytes, err := json.Marshal(mmap); err == nil {
-			json.Unmarshal(bytes, &member)
+			_ = json.Unmarshal(bytes, &member)
 		}
 		members = append(members, member)
 	}
@@ -340,7 +340,7 @@ func (c *MCPClient) ListIntegrations(ctx context.Context) ([]Integration, error)
 		}
 		var integration Integration
 		if bytes, err := json.Marshal(imap); err == nil {
-			json.Unmarshal(bytes, &integration)
+			_ = json.Unmarshal(bytes, &integration)
 		}
 		integrations = append(integrations, integration)
 	}
@@ -361,7 +361,7 @@ func (c *MCPClient) GetIntegration(ctx context.Context, uuid string) (*Integrati
 
 	var integration Integration
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &integration)
+		_ = json.Unmarshal(bytes, &integration)
 	}
 	return &integration, nil
 }
@@ -393,7 +393,7 @@ func (c *MCPClient) ListMonitors(ctx context.Context, status string, page, limit
 
 	var list MonitorList
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &list)
+		_ = json.Unmarshal(bytes, &list)
 	}
 	return &list, nil
 }
@@ -412,7 +412,7 @@ func (c *MCPClient) GetMonitor(ctx context.Context, uuid string) (*MonitorDetail
 
 	var monitor MonitorDetails
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &monitor)
+		_ = json.Unmarshal(bytes, &monitor)
 	}
 	return &monitor, nil
 }
@@ -437,7 +437,7 @@ func (c *MCPClient) SearchMonitorsByName(ctx context.Context, query string) ([]M
 		}
 		var monitor Monitor
 		if bytes, err := json.Marshal(mmap); err == nil {
-			json.Unmarshal(bytes, &monitor)
+			_ = json.Unmarshal(bytes, &monitor)
 		}
 		monitors = append(monitors, monitor)
 	}
@@ -487,7 +487,7 @@ func (c *MCPClient) CreateMonitor(ctx context.Context, req MCPCreateMonitorReque
 
 	var monitor MonitorDetails
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &monitor)
+		_ = json.Unmarshal(bytes, &monitor)
 	}
 	return &monitor, nil
 }
@@ -535,7 +535,7 @@ func (c *MCPClient) UpdateMonitor(ctx context.Context, uuid string, req MCPUpdat
 
 	var monitor MonitorDetails
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &monitor)
+		_ = json.Unmarshal(bytes, &monitor)
 	}
 	return &monitor, nil
 }
@@ -573,7 +573,7 @@ func (c *MCPClient) GetMonitorUptime(ctx context.Context, monitorUUID string) (*
 
 	var report UptimeReport
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &report)
+		_ = json.Unmarshal(bytes, &report)
 	}
 	return &report, nil
 }
@@ -599,7 +599,7 @@ func (c *MCPClient) ListOutages(ctx context.Context, page int) (*OutageList, err
 
 	var list OutageList
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &list)
+		_ = json.Unmarshal(bytes, &list)
 	}
 	return &list, nil
 }
@@ -618,7 +618,7 @@ func (c *MCPClient) GetOutage(ctx context.Context, uuid string) (*MCPOutage, err
 
 	var outage MCPOutage
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &outage)
+		_ = json.Unmarshal(bytes, &outage)
 	}
 	return &outage, nil
 }
@@ -642,7 +642,7 @@ func (c *MCPClient) GetMonitorOutages(ctx context.Context, monitorUUID string, p
 
 	var list OutageList
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &list)
+		_ = json.Unmarshal(bytes, &list)
 	}
 	return &list, nil
 }
@@ -661,7 +661,7 @@ func (c *MCPClient) GetOutageTimeline(ctx context.Context, outageUUID string) (*
 
 	var timeline OutageTimeline
 	if bytes, err := json.Marshal(data); err == nil {
-		json.Unmarshal(bytes, &timeline)
+		_ = json.Unmarshal(bytes, &timeline)
 	}
 	return &timeline, nil
 }

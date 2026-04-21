@@ -122,7 +122,7 @@ func (t *McpTransport) handleHTTPError(resp *http.Response) error {
 	case http.StatusTooManyRequests:
 		retryAfter := 0
 		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			fmt.Sscanf(ra, "%d", &retryAfter)
+			fmt.Sscanf(ra, "%d", &retryAfter) //nolint:errcheck
 		}
 		return &APIError{
 			StatusCode: 429,
@@ -203,7 +203,7 @@ func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 
 		if resp.StatusCode != http.StatusOK {
 			err := t.handleHTTPError(resp)
@@ -307,7 +307,7 @@ func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args m
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, t.handleHTTPError(resp)
@@ -352,10 +352,6 @@ func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args m
 	}
 
 	return parsed, nil
-}
-
-func randIntn(n int) int {
-	return rand.IntN(n)
 }
 
 // isServerError checks if an error is a server error that should be retried
