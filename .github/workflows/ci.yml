@@ -33,10 +33,14 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build
-        run: go build ./...
+        run: |
+          export GOTOOLCHAIN=auto
+          go build ./...
 
       - name: Test
-        run: go test -race -count=1 -coverprofile=coverage.out ./...
+        run: |
+          export GOTOOLCHAIN=auto
+          go test -race -count=1 -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         if: matrix.go-version == '1.26'
@@ -65,7 +69,9 @@ jobs:
           version: v2.10.1
 
       - name: Vet
-        run: go vet ./...
+        run: |
+          export GOTOOLCHAIN=auto
+          go vet ./...
 
   vuln:
     name: Vulnerability Check
@@ -81,7 +87,9 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: |
+          export GOTOOLCHAIN=auto
+          go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Run govulncheck
         run: govulncheck ./...
