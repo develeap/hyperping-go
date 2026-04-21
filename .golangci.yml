@@ -1,9 +1,11 @@
-version: "2"
-
 linters:
   default: standard
-  exclusions:
-    rules:
-      - path: _test\.go
-        linters:
-          - errcheck
+  disable:
+    - errcheck
+
+issues:
+  exclude-use-default: false
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck

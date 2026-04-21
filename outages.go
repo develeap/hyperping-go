@@ -98,7 +98,7 @@ func (c *Client) ListOutages(ctx context.Context) ([]Outage, error) {
 		if !result.HasNextPage {
 			if page >= maxOutagePaginationPages-1 {
 				c.logDebug(ctx, "outage pagination cap reached", map[string]interface{}{
-					"pages": maxOutagePaginationPages,
+					"pages":   maxOutagePaginationPages,
 					"warning": "maximum pagination pages reached; some outages may not be returned",
 				})
 			}
