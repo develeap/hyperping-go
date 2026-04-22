@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -21,6 +20,8 @@ const (
 	DefaultMCPTimeout = 30 * time.Second
 	// Using the existing DefaultMaxRetries from client.go
 	mcpProtocolVersion = "2025-03-26"
+	mcpBaseDelay    = 1 * time.Second
+	mcpMaxDelay   = 10 * time.Second
 )
 
 // ==================== Types ====================
@@ -209,7 +210,7 @@ func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 			err := t.handleHTTPError(resp)
 			if isServerError(err) && attempt < maxRetries {
 				lastErr = err
-				time.Sleep(time.Duration(1<<attempt) * time.Second)
+				time.Sleep(mcpBackoff(attempt))
 				continue
 			}
 			return nil, err
@@ -224,7 +225,7 @@ func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 			err := t.handleJSONRPCError(&rpcResp)
 			if isServerError(err) && attempt < maxRetries {
 				lastErr = err
-				time.Sleep(time.Duration(1<<attempt) * time.Second)
+				time.Sleep(mcpBackoff(attempt))
 				continue
 			}
 			return nil, err
@@ -262,11 +263,7 @@ func (t *McpTransport) CallTool(ctx context.Context, toolName string, args map[s
 		// Check if error is retryable (server errors 500, 502, 503, 504)
 		if isServerError(err) && attempt < maxRetries {
 			lastErr = err
-			sleepDur := time.Duration(1<<attempt+rand.IntN(2)) * time.Second
-			if sleepDur > 10*time.Second {
-				sleepDur = 10 * time.Second
-			}
-			time.Sleep(sleepDur)
+			time.Sleep(mcpBackoff(attempt))
 			continue
 		}
 
@@ -307,7 +304,7 @@ func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args m
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close() //nolint:errcheck //nolint:errcheck
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, t.handleHTTPError(resp)
@@ -372,4 +369,12 @@ func isServerError(err error) bool {
 		strings.Contains(errStr, "504") ||
 		strings.Contains(errStr, "server error") ||
 		strings.Contains(errStr, "Internal Server Error")
+}
+
+func mcpBackoff(attempt int) time.Duration {
+	delay := mcpBaseDelay * time.Duration(1<<attempt)
+	if delay > mcpMaxDelay {
+		return mcpMaxDelay
+	}
+	return delay
 }
