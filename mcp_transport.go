@@ -210,7 +210,11 @@ func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 			err := t.handleHTTPError(resp)
 			if isServerError(err) && attempt < maxRetries {
 				lastErr = err
-				time.Sleep(mcpBackoff(attempt))
+				select {
+				case <-time.After(mcpBackoff(attempt)):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
 				continue
 			}
 			return nil, err
@@ -225,7 +229,11 @@ func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 			err := t.handleJSONRPCError(&rpcResp)
 			if isServerError(err) && attempt < maxRetries {
 				lastErr = err
-				time.Sleep(mcpBackoff(attempt))
+				select {
+				case <-time.After(mcpBackoff(attempt)):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
 				continue
 			}
 			return nil, err
@@ -263,7 +271,11 @@ func (t *McpTransport) CallTool(ctx context.Context, toolName string, args map[s
 		// Check if error is retryable (server errors 500, 502, 503, 504)
 		if isServerError(err) && attempt < maxRetries {
 			lastErr = err
-			time.Sleep(mcpBackoff(attempt))
+			select {
+			case <-time.After(mcpBackoff(attempt)):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 			continue
 		}
 
