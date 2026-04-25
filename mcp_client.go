@@ -40,17 +40,6 @@ func marshalUnmarshal(data map[string]any, dst any) error {
 	return nil
 }
 
-// marshalUnmarshalAny is like marshalUnmarshal but accepts any value as source.
-func marshalUnmarshalAny(data any, dst any) error {
-	b, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("failed to marshal response data: %w", err)
-	}
-	if err := json.Unmarshal(b, dst); err != nil {
-		return fmt.Errorf("failed to unmarshal response into target type: %w", err)
-	}
-	return nil
-}
 
 // ==================== Status & Reporting ====================
 
