@@ -52,7 +52,8 @@ var (
 
 // Test 1.1: JSON-RPC request encoding
 func TestMCPTransport_EncodeRequest(t *testing.T) {
-	_ = NewMcpTransport("test-key", testMCPURL)
+	_, err := NewMcpTransport("test-key", testMCPURL)
+	require.NoError(t, err)
 
 	body, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
@@ -108,7 +109,8 @@ func TestMCPTransport_Initialize(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewMcpTransport("test-key", server.URL)
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
 	result, err := transport.Initialize(context.Background())
 
 	require.NoError(t, err)
@@ -122,7 +124,8 @@ func TestMCPTransport_CallTool_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewMcpTransport("test-key", server.URL)
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
 	transport.Initialize(context.Background())
 
 	result, err := transport.CallTool(context.Background(), "get_status_summary", nil)
@@ -137,9 +140,10 @@ func TestMCPTransport_HTTPError_401(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewMcpTransport("invalid-key", server.URL)
+	transport, err := NewMcpTransport("invalid-key", server.URL)
+	require.NoError(t, err)
 
-	_, err := transport.Initialize(context.Background())
+	_, err = transport.Initialize(context.Background())
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrUnauthorized))
 }
@@ -151,10 +155,11 @@ func TestMCPTransport_HTTPError_404(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewMcpTransport("test-key", server.URL)
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
 	transport.Initialize(context.Background())
 
-	_, err := transport.CallTool(context.Background(), "nonexistent", nil)
+	_, err = transport.CallTool(context.Background(), "nonexistent", nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrNotFound))
 }
@@ -167,9 +172,10 @@ func TestMCPTransport_HTTPError_429(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewMcpTransport("test-key", server.URL, WithMCPMaxRetries(2))
+	transport, err := NewMcpTransport("test-key", server.URL, WithMCPMaxRetries(2))
+	require.NoError(t, err)
 
-	_, err := transport.CallTool(context.Background(), "get_status_summary", nil)
+	_, err = transport.CallTool(context.Background(), "get_status_summary", nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrRateLimited))
 }
@@ -181,9 +187,10 @@ func TestMCPTransport_HTTPError_422(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewMcpTransport("test-key", server.URL)
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
 
-	_, err := transport.CallTool(context.Background(), "get_status_summary", nil)
+	_, err = transport.CallTool(context.Background(), "get_status_summary", nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrValidation))
 }
@@ -205,7 +212,8 @@ func TestMCPTransport_RetryOn500(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewMcpTransport("test-key", server.URL, WithMCPMaxRetries(2))
+	transport, err := NewMcpTransport("test-key", server.URL, WithMCPMaxRetries(2))
+	require.NoError(t, err)
 
 	result, err := transport.CallTool(context.Background(), "test", nil)
 	require.NoError(t, err)
@@ -231,7 +239,8 @@ func TestMCPTransport_RetryOnServerErrors(t *testing.T) {
 		}))
 		defer server.Close()
 
-		transport := NewMcpTransport("test-key", server.URL, WithMCPMaxRetries(1))
+		transport, err := NewMcpTransport("test-key", server.URL, WithMCPMaxRetries(1))
+		require.NoError(t, err)
 
 		result, err := transport.CallTool(context.Background(), "test", nil)
 		require.NoError(t, err, "Should retry on %d", status)
@@ -241,7 +250,8 @@ func TestMCPTransport_RetryOnServerErrors(t *testing.T) {
 
 // Test 1.12: Thread-safe request ID
 func TestMCPTransport_RequestID_Concurrent(t *testing.T) {
-	transport := NewMcpTransport("test-key", testMCPURL)
+	transport, err := NewMcpTransport("test-key", testMCPURL)
+	require.NoError(t, err)
 
 	var wg sync.WaitGroup
 	ids := make(map[int64]bool)
@@ -270,7 +280,8 @@ func TestMCPTransport_Initialize_Concurrent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewMcpTransport("test-key", server.URL)
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -294,9 +305,10 @@ func TestMCPTransport_NoRetryOn400(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewMcpTransport("test-key", server.URL, WithMCPMaxRetries(2))
+	transport, err := NewMcpTransport("test-key", server.URL, WithMCPMaxRetries(2))
+	require.NoError(t, err)
 
-	_, err := transport.CallTool(context.Background(), "test", nil)
+	_, err = transport.CallTool(context.Background(), "test", nil)
 	require.Error(t, err)
 	require.Equal(t, int64(1), callCount.Load(), "Should not retry on 400")
 }
@@ -396,4 +408,8 @@ func TestResponseTimeReport_Unmarshal(t *testing.T) {
 	require.Equal(t, 100.5, result.Avg)
 }
 
-
+// Test 1.15: NewMcpTransport rejects invalid URL scheme
+func TestNewMcpTransport_InvalidURL(t *testing.T) {
+	_, err := NewMcpTransport("key", "ftp://example.com")
+	require.Error(t, err, "non-HTTPS non-localhost URL should be rejected")
+}
