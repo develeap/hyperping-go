@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -56,6 +58,7 @@ type McpTransport struct {
 	token       []byte
 	maxRetries  int
 	initialized atomic.Bool
+	initMu      sync.Mutex
 	reqID       atomic.Int64
 }
 
@@ -83,13 +86,29 @@ func WithMCPHTTPClient(h *http.Client) TransportOption {
 	}
 }
 
-// NewMcpTransport creates a new MCP transport
-func NewMcpTransport(apiKey string, baseURL string, opts ...TransportOption) *McpTransport {
+// NewMcpTransport creates a new MCP transport.
+// Returns an error if baseURL fails validation (must be HTTPS or localhost).
+func NewMcpTransport(apiKey string, baseURL string, opts ...TransportOption) (*McpTransport, error) {
+	resolvedURL := DefaultMCPURL
+	if baseURL != "" {
+		if err := validateBaseURL(baseURL); err != nil {
+			return nil, fmt.Errorf("NewMcpTransport: %w", err)
+		}
+		resolvedURL = baseURL
+	}
+
+	baseTransport := &http.Transport{
+		MaxIdleConnsPerHost: 10,
+		MaxConnsPerHost:     20,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
 	t := &McpTransport{
 		client: &http.Client{
-			Timeout: DefaultMCPTimeout,
+			Timeout:   DefaultMCPTimeout,
+			Transport: buildTransportChain([]byte(apiKey), baseTransport, resolvedURL),
 		},
-		url:        DefaultMCPURL,
+		url:        resolvedURL,
 		token:      []byte(apiKey),
 		maxRetries: DefaultMaxRetries,
 	}
@@ -98,11 +117,7 @@ func NewMcpTransport(apiKey string, baseURL string, opts ...TransportOption) *Mc
 		opt(t)
 	}
 
-	if baseURL != "" {
-		t.url = baseURL
-	}
-
-	return t
+	return t, nil
 }
 
 // ==================== Request ID ====================
@@ -114,6 +129,9 @@ func (t *McpTransport) nextID() int64 {
 // ==================== Error Handling ====================
 
 func (t *McpTransport) handleHTTPError(resp *http.Response) error {
+	// Drain and discard the body so the connection can be reused.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20)) //nolint:errcheck
+
 	statusCode := resp.StatusCode
 	switch statusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -253,9 +271,20 @@ func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 // ==================== CallTool ====================
 
 func (t *McpTransport) CallTool(ctx context.Context, toolName string, args map[string]any) (any, error) {
+	// Use a mutex to prevent concurrent goroutines from both entering Initialize.
+	// The fast-path atomic load avoids lock contention once initialized.
 	if !t.initialized.Load() {
-		if _, err := t.Initialize(ctx); err != nil {
-			return nil, err
+		t.initMu.Lock()
+		// Re-check under the lock: another goroutine may have finished init
+		// between our Load() above and acquiring the lock.
+		if !t.initialized.Load() {
+			_, initErr := t.Initialize(ctx)
+			t.initMu.Unlock()
+			if initErr != nil {
+				return nil, initErr
+			}
+		} else {
+			t.initMu.Unlock()
 		}
 	}
 
@@ -340,18 +369,33 @@ func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args m
 		return rpcResp.Result, nil
 	}
 
-	content, ok := resultMap["content"].([]any)
-	if !ok || len(content) == 0 {
+	rawContent, exists := resultMap["content"]
+	if !exists {
 		return nil, nil
 	}
-
-	firstContent, ok := content[0].(map[string]any)
+	content, ok := rawContent.([]any)
 	if !ok {
+		return nil, fmt.Errorf("MCP response: expected \"content\" to be []any, got %T", rawContent)
+	}
+	if len(content) == 0 {
 		return nil, nil
 	}
 
-	text, ok := firstContent["text"].(string)
-	if !ok || text == "" {
+	rawFirst := content[0]
+	firstContent, ok := rawFirst.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("MCP response: expected content[0] to be map[string]any, got %T", rawFirst)
+	}
+
+	rawText, exists := firstContent["text"]
+	if !exists {
+		return nil, nil
+	}
+	text, ok := rawText.(string)
+	if !ok {
+		return nil, fmt.Errorf("MCP response: expected content[0][\"text\"] to be string, got %T", rawText)
+	}
+	if text == "" {
 		return nil, nil
 	}
 
