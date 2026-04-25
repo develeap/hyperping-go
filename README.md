@@ -63,13 +63,42 @@ client := hyperping.NewClient(
 )
 ```
 
+## MCP Client
+
+The library also exposes a JSON-RPC 2.0 MCP client for the Hyperping MCP server (25 read tools, 5 write tools).
+
+```go
+// Initialize transport (validates URL, enforces TLS 1.2+)
+transport, err := hyperping.NewMcpTransport("sk_your_api_key", "")
+if err != nil {
+    log.Fatal(err)
+}
+mcpClient := hyperping.NewMCPClient(transport)
+
+// Query monitor response time
+report, err := mcpClient.GetMonitorResponseTime(ctx, "monitor-uuid")
+if err != nil {
+    log.Fatal(err)
+}
+if report != nil {
+    fmt.Printf("avg: %.3fs\n", report.Avg)
+}
+```
+
+Pass an empty string for the URL to use the official endpoint (`https://api.hyperping.io/v1/mcp`). Pass `http://localhost:PORT` for local development.
+
+> **v0.4.0 breaking change:** `NewMcpTransport` now returns `(*McpTransport, error)`. Callers must handle the returned error.
+
 ## Features
 
 - Automatic retry with exponential backoff and jitter on 5xx and 429 responses
 - Retry-After header respected on rate limit responses
 - Circuit breaker (via [gobreaker](https://github.com/sony/gobreaker)) to prevent cascading failures
-- Context propagation on all API calls
+- Context propagation on all API calls; in-flight MCP calls respect context cancellation
 - Structured error types: `*APIError` with status code and message
+- MCP JSON-RPC 2.0 client with 30 typed tools (25 read, 5 write)
+- TLS 1.2+ enforced on all transport connections with AEAD cipher suites
+- Mutex double-checked locking on MCP handshake prevents concurrent initialization races
 
 ## Testing
 
