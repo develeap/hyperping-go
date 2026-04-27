@@ -6,11 +6,11 @@ toolchain go1.26.1
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
-	github.com/getkin/kin-openapi v0.135.0
+	github.com/getkin/kin-openapi v0.136.0
 	github.com/go-rod/rod v0.116.2
 	github.com/google/go-github/v68 v68.0.0
 	github.com/hashicorp/terraform-json v0.27.2
-	github.com/oasdiff/oasdiff v1.14.0
+	github.com/oasdiff/oasdiff v1.15.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -30,8 +30,9 @@ require (
 	github.com/mailru/easyjson v0.9.2 // indirect
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/oasdiff/yaml v0.0.9 // indirect
-	github.com/oasdiff/yaml3 v0.0.9 // indirect
+	github.com/oasdiff/yaml3 v0.0.12 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
