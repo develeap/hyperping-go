@@ -72,18 +72,31 @@ jobs:
           # golang.org/x/sys/unix v0.35+ using //go:linkname in auxv.go, which
           # causes go/packages to fail type-checking in the default symbol-scan
           # mode. Package-level scanning still catches all vulnerable imports.
+          # TODO: drop -scan package and bump the govulncheck pin once an
+          # upstream release fixes the go/packages crash.
           govulncheck -scan package ./...
 
       - name: License compliance
         run: |
           go mod download
+          # Capture explicitly so a `go list` failure aborts the step. Without
+          # this, an empty substitution would silently produce a 0-iteration
+          # loop and a false PASS.
+          if ! mods=$(go list -m -f '{{.Dir}}' all); then
+            echo "FAIL: could not list dependency modules"
+            exit 1
+          fi
           FAIL=0
-          for dir in $(go list -m -f '{{.Dir}}' all 2>/dev/null | grep -v '^$'); do
+          for dir in $mods; do
             for f in "$dir/LICENSE" "$dir/LICENCE" "$dir/LICENSE.md" "$dir/LICENCE.md" "$dir/LICENSE.txt" "$dir/COPYING"; do
               # head -20 limits the regex to the license header. Without this
               # bound, MPL 2.0 license bodies false-match because their
               # "Secondary License" section names AGPL by reference (line ~71).
-              if [ -f "$f" ] && head -20 "$f" | grep -qliE 'GNU GENERAL PUBLIC LICENSE|GNU AFFERO|Server Side Public License|EUPL' 2>/dev/null; then
+              # The regex intentionally drops the exporter's "Version 3"
+              # qualifier on GPL (any GPL version is copyleft for our purposes)
+              # and uses the SSPL full name; EUPL is matched by abbreviation,
+              # which appears on the title line of standard EUPL files.
+              if [ -f "$f" ] && head -20 "$f" | grep -qiE 'GNU GENERAL PUBLIC LICENSE|GNU AFFERO|Server Side Public License|EUPL' 2>/dev/null; then
                 echo "FAIL: copyleft license detected in $f"
                 FAIL=1
               fi
