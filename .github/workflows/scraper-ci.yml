@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - 'tools/**'
+      - '.github/workflows/scraper-ci.yml'
   push:
     branches:
       - main
     paths:
       - 'tools/**'
+      - '.github/workflows/scraper-ci.yml'
 
 permissions:
   contents: read
