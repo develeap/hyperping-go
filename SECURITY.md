@@ -8,8 +8,6 @@
 | Previous minor | Security fixes only |
 | Older | Not supported |
 
-The latest release is v0.4.0.
-
 ## Reporting a Vulnerability
 
 **Do not open a public GitHub issue for security vulnerabilities.**
