@@ -67,14 +67,8 @@ jobs:
 
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-          # -scan package avoids a govulncheck v1.1.4 internal error triggered by
-          # golang.org/x/sys/unix v0.35+ using //go:linkname in auxv.go, which
-          # causes go/packages to fail type-checking in the default symbol-scan
-          # mode. Package-level scanning still catches all vulnerable imports.
-          # TODO: drop -scan package and bump the govulncheck pin once an
-          # upstream release fixes the go/packages crash.
-          govulncheck -scan package ./...
+          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+          govulncheck ./...
 
       - name: License compliance
         run: |
