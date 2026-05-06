@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - 'tools/**'
+      - '.github/workflows/scraper-ci.yml'
   push:
     branches:
       - main
     paths:
       - 'tools/**'
+      - '.github/workflows/scraper-ci.yml'
 
 permissions:
   contents: read
@@ -41,3 +43,64 @@ jobs:
         with:
           version: v2.10.1
           working-directory: tools/cmd/scraper
+
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/cmd/scraper
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Use latest stable Go (rather than the toolchain pinned in scraper's
+      # go.mod) so govulncheck scans against an up-to-date stdlib. Pinning
+      # to the project toolchain causes stdlib-vuln noise whenever a newer
+      # patch release contains crypto/x509 or crypto/tls fixes the project
+      # has not yet picked up. Same pattern as the root vuln job.
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: stable
+          cache-dependency-path: tools/cmd/scraper/go.sum
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          # -scan package avoids a govulncheck v1.1.4 internal error triggered by
+          # golang.org/x/sys/unix v0.35+ using //go:linkname in auxv.go, which
+          # causes go/packages to fail type-checking in the default symbol-scan
+          # mode. Package-level scanning still catches all vulnerable imports.
+          # TODO: drop -scan package and bump the govulncheck pin once an
+          # upstream release fixes the go/packages crash.
+          govulncheck -scan package ./...
+
+      - name: License compliance
+        run: |
+          go mod download
+          # Capture explicitly so a `go list` failure aborts the step. Without
+          # this, an empty substitution would silently produce a 0-iteration
+          # loop and a false PASS.
+          if ! mods=$(go list -m -f '{{.Dir}}' all); then
+            echo "FAIL: could not list dependency modules"
+            exit 1
+          fi
+          FAIL=0
+          for dir in $mods; do
+            for f in "$dir/LICENSE" "$dir/LICENCE" "$dir/LICENSE.md" "$dir/LICENCE.md" "$dir/LICENSE.txt" "$dir/COPYING"; do
+              # head -20 limits the regex to the license header. Without this
+              # bound, MPL 2.0 license bodies false-match because their
+              # "Secondary License" section names AGPL by reference (line ~71).
+              # The regex intentionally drops the exporter's "Version 3"
+              # qualifier on GPL (any GPL version is copyleft for our purposes)
+              # and uses the SSPL full name; EUPL is matched by abbreviation,
+              # which appears on the title line of standard EUPL files.
+              if [ -f "$f" ] && head -20 "$f" | grep -qiE 'GNU GENERAL PUBLIC LICENSE|GNU AFFERO|Server Side Public License|EUPL' 2>/dev/null; then
+                echo "FAIL: copyleft license detected in $f"
+                FAIL=1
+              fi
+            done
+          done
+          if [ "$FAIL" -eq 1 ]; then exit 1; fi
+          echo "PASS: no copyleft licenses in dependencies"
