@@ -6,7 +6,7 @@ toolchain go1.26.1
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
-	github.com/getkin/kin-openapi v0.137.0
+	github.com/getkin/kin-openapi v0.138.0
 	github.com/go-rod/rod v0.116.2
 	github.com/google/go-github/v68 v68.0.0
 	github.com/hashicorp/terraform-json v0.27.2
