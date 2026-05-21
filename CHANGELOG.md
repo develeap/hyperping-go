@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-05-21
+
+### Fixed
+
+- MCP transport now captures `Mcp-Session-Id` from the `initialize` response and echoes it on every subsequent JSON-RPC request, per MCP 2025-03-26 Streamable HTTP spec. Servers that enforce session ownership (Hyperping among them) were previously treating every `tools/call` as a sessionless fresh attempt and rate-limiting them as `initialize`-bucket violations. Fixes hyperping-exporter#60.
+
+### Added
+
+- One-shot session-loss recovery: when the server returns HTTP 404 to a request that carried a session id, the transport clears its local session state, re-initializes once, and retries the failing call. The existing init mutex serializes concurrent recovery so a worker pool does not stampede the server with parallel initialize attempts.
+- `ErrSessionLost` sentinel error so callers can match the recovered-too-late case via `errors.Is`.
+
+### Notes
+
+- Backward compatible: servers that do not issue `Mcp-Session-Id` continue to work without sending the header.
+
 ## [0.4.0] - 2026-04-25
 
 ### Breaking Changes

@@ -24,6 +24,18 @@ const (
 	mcpProtocolVersion = "2025-03-26"
 	mcpBaseDelay    = 1 * time.Second
 	mcpMaxDelay   = 10 * time.Second
+	// sdkVersion is the single source of truth for the version string this
+	// SDK reports to MCP servers via initialize's clientInfo. Bump it when
+	// cutting a new release; the CHANGELOG entry and this const should move
+	// together. Keeping this as a const rather than a `WithVersion()` option
+	// is deliberate: server-side telemetry should observe the actual SDK
+	// version, not a value chosen by the consumer.
+	sdkVersion = "0.5.0"
+	// mcpAcceptHeader is required by MCP 2025-03-26 Streamable HTTP: the
+	// server may respond with either application/json or text/event-stream
+	// at its discretion, so clients must accept both even if they only
+	// process JSON today.
+	mcpAcceptHeader = "application/json, text/event-stream"
 )
 
 // ==================== Types ====================
@@ -51,6 +63,12 @@ type JSONRPCError struct {
 	Data    any    `json:"data,omitempty"`
 }
 
+// ErrSessionLost indicates the MCP server returned HTTP 404 for a request that
+// carried an Mcp-Session-Id header. The transport clears its session state and
+// performs one re-initialize + retry automatically; callers see this error only
+// when the retried call also fails with a session-loss response.
+var ErrSessionLost = errors.New("MCP session lost; re-initialize required")
+
 // McpTransport is the low-level JSON-RPC 2.0 client for the Hyperping MCP server
 type McpTransport struct {
 	client      *http.Client
@@ -60,6 +78,34 @@ type McpTransport struct {
 	initialized atomic.Bool
 	initMu      sync.Mutex
 	reqID       atomic.Int64
+	// sessionID holds the Mcp-Session-Id captured from the initialize response,
+	// per MCP 2025-03-26 Streamable HTTP spec. nil means "no session"; the
+	// transport then omits the header entirely (servers that do not issue a
+	// session id continue to work unchanged). Written only under initMu;
+	// read lock-free in callToolOnce.
+	sessionID atomic.Pointer[string]
+}
+
+// loadSessionID returns the live session id by VALUE, not pointer. The
+// snapshot-match check in callToolOnce's 404 handler depends on string
+// equality of the value: every storeSessionID call allocates a new
+// underlying string, so pointer identity would collapse all "sess-A"
+// stores into the same identity check and break the guard. If this is
+// ever refactored to compare pointers, the guard's correctness goes with
+// it.
+func (t *McpTransport) loadSessionID() string {
+	if p := t.sessionID.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+func (t *McpTransport) storeSessionID(s string) {
+	if s == "" {
+		t.sessionID.Store(nil)
+		return
+	}
+	t.sessionID.Store(&s)
 }
 
 // TransportOption configures McpTransport
@@ -187,6 +233,19 @@ func (t *McpTransport) handleJSONRPCError(resp *JSONRPCResponse) error {
 
 // ==================== Initialize ====================
 
+// Initialize performs the MCP initialize handshake. On success it stores the
+// captured Mcp-Session-Id (if any) and marks the transport ready for tool
+// calls.
+//
+// Concurrency:
+//   - Calling Initialize directly is safe to use once before any CallTool.
+//   - Calling Initialize concurrently with in-flight CallTool requests is
+//     permitted (no deadlock, no data corruption), but may cause a CallTool
+//     in the middle of callToolOnce to surface ErrSessionLost spuriously
+//     for a backward-compat 404 — the race between the snapshot at the top
+//     of callToolOnce and a session id newly issued mid-call is treated as
+//     session-loss by the recovery path. In steady-state usage, prefer
+//     letting CallTool's built-in init guard manage initialization.
 func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 	req := JSONRPCRequest{
 		JSONRPC: "2.0",
@@ -197,7 +256,7 @@ func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 			"capabilities":  map[string]any{},
 			"clientInfo": map[string]any{
 				"name":    "hyperping-go",
-				"version": "0.3.0",
+				"version": sdkVersion,
 			},
 		},
 	}
@@ -211,95 +270,124 @@ func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 	maxRetries := t.maxRetries
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.url, bytes.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+string(t.token))
-
-		resp, err := t.client.Do(httpReq)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close() //nolint:errcheck
-
-		if resp.StatusCode != http.StatusOK {
-			err := t.handleHTTPError(resp)
-			if isServerError(err) && attempt < maxRetries {
-				lastErr = err
-				select {
-				case <-time.After(mcpBackoff(attempt)):
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-				continue
-			}
-			return nil, err
-		}
-
-		var rpcResp JSONRPCResponse
-		if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
-			return nil, err
-		}
-
-		if rpcResp.Error != nil {
-			err := t.handleJSONRPCError(&rpcResp)
-			if isServerError(err) && attempt < maxRetries {
-				lastErr = err
-				select {
-				case <-time.After(mcpBackoff(attempt)):
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-				continue
-			}
-			return nil, err
-		}
-
-		t.initialized.Store(true)
-
-		if result, ok := rpcResp.Result.(map[string]any); ok {
+		result, retry, err := t.initializeAttempt(ctx, body)
+		if err == nil {
 			return result, nil
 		}
-		return nil, nil
+		if !retry || attempt == maxRetries {
+			return nil, err
+		}
+		lastErr = err
+		select {
+		case <-time.After(mcpBackoff(attempt)):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
 	return nil, lastErr
 }
 
+// initializeAttempt runs a single handshake round-trip. The (retry bool, err)
+// pair is the loop control signal from the caller. Each attempt is scoped to
+// its own function so resp.Body.Close() fires per-attempt rather than
+// accumulating across retries.
+//
+// Write-ordering note (M2/Case B in callToolOnce): the writes to sessionID
+// and initialized happen in the order "sessionID set, THEN initialized set
+// true". Under sync/atomic sequential consistency, a reader that observes
+// initialized=true must therefore observe the corresponding sessionID write.
+// The mirror order in the clear path (initialized=false BEFORE sessionID="")
+// has the same property: a reader that observes sessionID="" must observe
+// initialized=false. Reorder these and the case B race-window detection in
+// callToolOnce breaks.
+func (t *McpTransport) initializeAttempt(ctx context.Context, body []byte) (map[string]any, bool, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.url, bytes.NewReader(body))
+	if err != nil {
+		return nil, false, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", mcpAcceptHeader)
+	httpReq.Header.Set("Authorization", "Bearer "+string(t.token))
+
+	resp, err := t.client.Do(httpReq)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		err := t.handleHTTPError(resp)
+		return nil, isServerError(err), err
+	}
+
+	var rpcResp JSONRPCResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return nil, false, err
+	}
+
+	if rpcResp.Error != nil {
+		err := t.handleJSONRPCError(&rpcResp)
+		return nil, isServerError(err), err
+	}
+
+	// Capture Mcp-Session-Id per MCP 2025-03-26 Streamable HTTP spec. If the
+	// server did not issue a session id, this stores "" (treated as "no
+	// session") and the transport stays backward compatible with servers
+	// that do not enforce sessions. The Store ordering below is load-bearing
+	// for the case B race-window guard in callToolOnce; see the doc on this
+	// function.
+	t.storeSessionID(resp.Header.Get("Mcp-Session-Id"))
+	t.initialized.Store(true)
+
+	if result, ok := rpcResp.Result.(map[string]any); ok {
+		return result, false, nil
+	}
+	return nil, false, nil
+}
+
 // ==================== CallTool ====================
 
 func (t *McpTransport) CallTool(ctx context.Context, toolName string, args map[string]any) (any, error) {
-	// Use a mutex to prevent concurrent goroutines from both entering Initialize.
-	// The fast-path atomic load avoids lock contention once initialized.
-	if !t.initialized.Load() {
-		t.initMu.Lock()
-		// Re-check under the lock: another goroutine may have finished init
-		// between our Load() above and acquiring the lock.
-		if !t.initialized.Load() {
-			_, initErr := t.Initialize(ctx)
-			t.initMu.Unlock()
-			if initErr != nil {
-				return nil, initErr
-			}
-		} else {
-			t.initMu.Unlock()
-		}
-	}
-
 	var lastErr error
+	var sessionRecoveryAttempted bool
 	maxRetries := t.maxRetries
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Init guard inside the loop so session-loss recovery (which clears
+		// t.initialized) re-fires Initialize on the next iteration. The
+		// fast-path atomic load keeps the common case lock-free.
+		if !t.initialized.Load() {
+			t.initMu.Lock()
+			if !t.initialized.Load() {
+				_, initErr := t.Initialize(ctx)
+				t.initMu.Unlock()
+				if initErr != nil {
+					return nil, initErr
+				}
+			} else {
+				t.initMu.Unlock()
+			}
+		}
+
 		result, err := t.callToolOnce(ctx, toolName, args)
 		if err == nil {
 			return result, nil
 		}
+		lastErr = err
 
-		// Check if error is retryable (server errors 500, 502, 503, 504)
+		// Session-loss recovery: server dropped our session. callToolOnce has
+		// already cleared t.initialized and t.sessionID, so the next iteration
+		// re-initializes under initMu (concurrent callers serialize through
+		// the same mutex, so the server sees one re-initialize, not N). At
+		// most one recovery attempt per CallTool to avoid infinite loops.
+		if errors.Is(err, ErrSessionLost) && !sessionRecoveryAttempted {
+			sessionRecoveryAttempted = true
+			continue
+		}
+
+		// Retryable server errors (500, 502, 503, 504)
 		if isServerError(err) && attempt < maxRetries {
-			lastErr = err
 			select {
 			case <-time.After(mcpBackoff(attempt)):
 			case <-ctx.Done():
@@ -339,13 +427,79 @@ func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args m
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", mcpAcceptHeader)
 	httpReq.Header.Set("Authorization", "Bearer "+string(t.token))
+	// MCP-Protocol-Version is required by the 2025-06-18 spec amendment on
+	// every request after initialize. The 2025-03-26 spec does not require
+	// it but tolerates it (unknown header). Sending it now keeps the SDK
+	// forward-compatible with servers that have adopted the amendment.
+	httpReq.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
+	// Snapshot the session id for the lifetime of this attempt so the 404
+	// detection below knows whether the request carried one.
+	sid := t.loadSessionID()
+	if sid != "" {
+		httpReq.Header.Set("Mcp-Session-Id", sid)
+	}
 
 	resp, err := t.client.Do(httpReq)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close() //nolint:errcheck
+
+	// Session-loss handling on HTTP 404.
+	//
+	// Per MCP 2025-03-26 Streamable HTTP: HTTP 404 on an established session
+	// means the server dropped that session. The spec uses JSON-RPC error
+	// -32601 (method not found) for unknown tools, NOT HTTP 404. So any 404
+	// on a session-bearing request is interpreted as session-loss. A
+	// non-spec-compliant server that returns 404 for unknown tools will see
+	// this misclassified as a session-loss + retry, but the retry will also
+	// 404, surfacing as ErrSessionLost. Callers wanting to distinguish
+	// "session lost" from "tool genuinely missing" should rely on the
+	// server using the spec-compliant error code.
+	//
+	// Case A — request DID carry a session id: clear local state under
+	// initMu, paired with a sid-match check so a stale 404 (from a request
+	// sent before another goroutine already recovered) does not clobber a
+	// freshly re-initialized session and cause a re-init cascade under
+	// heavy concurrency.
+	//
+	// Case B — request did NOT carry a session id, but the live session
+	// state has changed since our snapshot: a concurrent goroutine cleared
+	// or replaced the session between our init-guard fast-load and the
+	// sessionID snapshot at the top of this function. The 404 reflects
+	// that race, not a missing-tool error. Signal session loss so the
+	// caller's recovery path can re-initialize and retry. Checking both
+	// "session id now non-empty" and "transport no longer initialized"
+	// catches both halves of the clear+re-init window — the write ordering
+	// in initializeAttempt and the clear below is what makes this safe.
+	//
+	// Case C — request had no session id AND the live state is unchanged
+	// (still no session, still initialized): the server simply does not
+	// enforce sessions (backward-compat path) and the 404 is a genuine
+	// missing-tool / bad-URL response. Fall through to the existing
+	// error path so callers can errors.Is(err, ErrNotFound).
+	if resp.StatusCode == http.StatusNotFound {
+		// Drain so the connection can be reused. Bounded by 1<<20 to keep
+		// a misbehaving server from streaming arbitrary bytes through us.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20)) //nolint:errcheck
+		if sid != "" {
+			t.initMu.Lock()
+			// See M2 in initializeAttempt's doc for why this write order
+			// (initialized=false BEFORE sessionID="") is load-bearing for
+			// case B's race detection.
+			if t.loadSessionID() == sid {
+				t.initialized.Store(false)
+				t.storeSessionID("")
+			}
+			t.initMu.Unlock()
+			return nil, ErrSessionLost
+		}
+		if t.loadSessionID() != "" || !t.initialized.Load() {
+			return nil, ErrSessionLost
+		}
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, t.handleHTTPError(resp)
