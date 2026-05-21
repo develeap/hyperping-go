@@ -569,16 +569,33 @@ func TestMCPTransport_SessionLossRecovery(t *testing.T) {
 // Test 1.20: 20 concurrent callers see at most ONE re-initialize after a
 // session loss. The init mutex serializes recovery so the server is not
 // stampeded with parallel initialize attempts.
+//
+// "No stampede" is verified two ways:
+//   - server total initialize count is exactly 2 (initial + one recovery);
+//   - server never observes two initialize requests concurrently in-flight
+//     (an inFlight gauge incremented at handler entry, decremented at exit).
+//     The total-count assertion alone could pass even if 19 goroutines all
+//     entered the recovery init concurrently and the server happened to
+//     serialize them; the inFlight gauge catches that subtler pattern.
 func TestMCPTransport_SessionLoss_NoStampede(t *testing.T) {
 	var (
-		initCount atomic.Int64
-		callCount atomic.Int64
+		initCount    atomic.Int64
+		callCount    atomic.Int64
+		inFlightInit atomic.Int64
+		stampede     atomic.Bool
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		method := classifyRequest(t, r)
 		if method == "initialize" {
+			if inFlightInit.Add(1) > 1 {
+				stampede.Store(true)
+			}
+			defer inFlightInit.Add(-1)
 			n := initCount.Add(1)
 			w.Header().Set("Mcp-Session-Id", fmt.Sprintf("sess-%d", n))
+			// Hold the handler briefly so concurrent inits would actually
+			// overlap if the init mutex wasn't serializing them.
+			time.Sleep(5 * time.Millisecond)
 			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
 			return
 		}
@@ -616,10 +633,144 @@ func TestMCPTransport_SessionLoss_NoStampede(t *testing.T) {
 
 	require.Equal(t, int64(2), initCount.Load(),
 		"server saw %d initialize requests; want exactly 2", initCount.Load())
+	require.False(t, stampede.Load(),
+		"two initialize requests overlapped on the server; init mutex did not serialize recovery")
 	require.Equal(t, "sess-2", transport.loadSessionID())
 	for i, e := range errs {
 		require.NoError(t, e, "goroutine %d failed", i)
 	}
+}
+
+// Test 1.21a: backward-compat server returns HTTP 404 for an unknown tool
+// (the request carried no session id because the server never issued one).
+// The transport must surface this as ErrNotFound, NOT ErrSessionLost. This
+// codifies Case C in callToolOnce's 404 handler.
+func TestMCPTransport_BackwardCompat_NotFound_StaysNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := classifyRequest(t, r)
+		if method == "initialize" {
+			// No Mcp-Session-Id header on response — backward-compat server.
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+			return
+		}
+		// tools/call → unknown tool, server returns 404.
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	_, err = transport.CallTool(context.Background(), "missing_tool", nil)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrNotFound),
+		"backward-compat 404 must surface as ErrNotFound, not %T: %v", err, err)
+	require.False(t, errors.Is(err, ErrSessionLost),
+		"backward-compat 404 must NOT surface as ErrSessionLost")
+}
+
+// Test 1.21b: each McpTransport instance owns its own session id. A session
+// captured on one transport must not leak to another instance.
+func TestMCPTransport_SessionID_DoesNotLeakAcrossInstances(t *testing.T) {
+	makeServer := func(sid string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Mcp-Session-Id", sid)
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+		}))
+	}
+	srvA := makeServer("sess-A")
+	defer srvA.Close()
+	srvB := makeServer("sess-B")
+	defer srvB.Close()
+
+	tA, err := NewMcpTransport("key-A", srvA.URL)
+	require.NoError(t, err)
+	tB, err := NewMcpTransport("key-B", srvB.URL)
+	require.NoError(t, err)
+
+	_, err = tA.Initialize(context.Background())
+	require.NoError(t, err)
+	_, err = tB.Initialize(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, "sess-A", tA.loadSessionID())
+	require.Equal(t, "sess-B", tB.loadSessionID())
+}
+
+// Test 1.21c: ErrSessionLost remains matchable via errors.Is when callers
+// wrap it for additional context. Locks in the sentinel-error contract so
+// a future refactor that switches to a typed error or fmt.Errorf wrapping
+// does not silently break consumer code.
+func TestMCPTransport_SessionLost_IsMatchable_WhenWrapped(t *testing.T) {
+	require.True(t, errors.Is(ErrSessionLost, ErrSessionLost), "sanity")
+
+	wrapped := fmt.Errorf("CallTool retry exhausted: %w", ErrSessionLost)
+	require.True(t, errors.Is(wrapped, ErrSessionLost),
+		"errors.Is must traverse wrapping; got %v", wrapped)
+
+	doubleWrapped := fmt.Errorf("monitor poll failed: %w", wrapped)
+	require.True(t, errors.Is(doubleWrapped, ErrSessionLost),
+		"errors.Is must traverse double-wrapping; got %v", doubleWrapped)
+}
+
+// Test 1.21d: concurrent direct calls to Initialize (rare but supported) do
+// not deadlock or corrupt state, even with simultaneous CallTool traffic.
+// Documents that the transport tolerates the M1 race window described in
+// Initialize's doc; this is a smoke test, not a correctness assertion about
+// individual error returns.
+func TestMCPTransport_Initialize_RacingWithCallTool(t *testing.T) {
+	var initCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := classifyRequest(t, r)
+		if method == "initialize" {
+			n := initCount.Add(1)
+			w.Header().Set("Mcp-Session-Id", fmt.Sprintf("sess-%d", n))
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+			return
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(mockStatusSummaryResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Initialize-spammer goroutine.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20; i++ {
+			if _, e := transport.Initialize(ctx); e != nil {
+				return
+			}
+		}
+	}()
+	// CallTool-spammer goroutine.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20; i++ {
+			// CallTool may surface ErrSessionLost spuriously per the M1 doc;
+			// we tolerate but do not assert on it. The point is no deadlock,
+			// no panic, no goroutine leak.
+			_, _ = transport.CallTool(ctx, "get_status_summary", nil)
+		}
+	}()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatalf("concurrent Initialize + CallTool did not complete within timeout")
+	}
+
+	require.True(t, transport.initialized.Load(),
+		"transport should be initialized after the spam settles")
 }
 
 // Test 1.21: when the retried call also returns session-loss, CallTool stops
