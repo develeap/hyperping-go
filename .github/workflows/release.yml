@@ -115,6 +115,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Idempotent: skip if a release already exists for this tag. The
+          # natural flow for releases with curated notes is "tag locally,
+          # gh release create with the CHANGELOG block, then push the tag",
+          # which triggers this workflow. Without this guard the auto-create
+          # step 422s against the existing release.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; leaving curated notes in place."
+            exit 0
+          fi
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
             --notes "${{ steps.changelog.outputs.notes }}" \
