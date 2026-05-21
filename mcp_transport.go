@@ -51,6 +51,12 @@ type JSONRPCError struct {
 	Data    any    `json:"data,omitempty"`
 }
 
+// ErrSessionLost indicates the MCP server returned HTTP 404 for a request that
+// carried an Mcp-Session-Id header. The transport clears its session state and
+// performs one re-initialize + retry automatically; callers see this error only
+// when the retried call also fails with a session-loss response.
+var ErrSessionLost = errors.New("MCP session lost; re-initialize required")
+
 // McpTransport is the low-level JSON-RPC 2.0 client for the Hyperping MCP server
 type McpTransport struct {
 	client      *http.Client
@@ -60,6 +66,27 @@ type McpTransport struct {
 	initialized atomic.Bool
 	initMu      sync.Mutex
 	reqID       atomic.Int64
+	// sessionID holds the Mcp-Session-Id captured from the initialize response,
+	// per MCP 2025-03-26 Streamable HTTP spec. nil means "no session"; the
+	// transport then omits the header entirely (servers that do not issue a
+	// session id continue to work unchanged). Written only under initMu;
+	// read lock-free in callToolOnce.
+	sessionID atomic.Pointer[string]
+}
+
+func (t *McpTransport) loadSessionID() string {
+	if p := t.sessionID.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+func (t *McpTransport) storeSessionID(s string) {
+	if s == "" {
+		t.sessionID.Store(nil)
+		return
+	}
+	t.sessionID.Store(&s)
 }
 
 // TransportOption configures McpTransport
@@ -197,7 +224,7 @@ func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 			"capabilities":  map[string]any{},
 			"clientInfo": map[string]any{
 				"name":    "hyperping-go",
-				"version": "0.3.0",
+				"version": "0.5.0",
 			},
 		},
 	}
@@ -257,6 +284,11 @@ func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 			return nil, err
 		}
 
+		// Capture Mcp-Session-Id per MCP 2025-03-26 Streamable HTTP spec. If
+		// the server did not issue a session id, this stores "" (treated as
+		// "no session") and the transport stays backward compatible with
+		// servers that do not enforce sessions.
+		t.storeSessionID(resp.Header.Get("Mcp-Session-Id"))
 		t.initialized.Store(true)
 
 		if result, ok := rpcResp.Result.(map[string]any); ok {
@@ -271,35 +303,45 @@ func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
 // ==================== CallTool ====================
 
 func (t *McpTransport) CallTool(ctx context.Context, toolName string, args map[string]any) (any, error) {
-	// Use a mutex to prevent concurrent goroutines from both entering Initialize.
-	// The fast-path atomic load avoids lock contention once initialized.
-	if !t.initialized.Load() {
-		t.initMu.Lock()
-		// Re-check under the lock: another goroutine may have finished init
-		// between our Load() above and acquiring the lock.
-		if !t.initialized.Load() {
-			_, initErr := t.Initialize(ctx)
-			t.initMu.Unlock()
-			if initErr != nil {
-				return nil, initErr
-			}
-		} else {
-			t.initMu.Unlock()
-		}
-	}
-
 	var lastErr error
+	var sessionRecoveryAttempted bool
 	maxRetries := t.maxRetries
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Init guard inside the loop so session-loss recovery (which clears
+		// t.initialized) re-fires Initialize on the next iteration. The
+		// fast-path atomic load keeps the common case lock-free.
+		if !t.initialized.Load() {
+			t.initMu.Lock()
+			if !t.initialized.Load() {
+				_, initErr := t.Initialize(ctx)
+				t.initMu.Unlock()
+				if initErr != nil {
+					return nil, initErr
+				}
+			} else {
+				t.initMu.Unlock()
+			}
+		}
+
 		result, err := t.callToolOnce(ctx, toolName, args)
 		if err == nil {
 			return result, nil
 		}
+		lastErr = err
 
-		// Check if error is retryable (server errors 500, 502, 503, 504)
+		// Session-loss recovery: server dropped our session. callToolOnce has
+		// already cleared t.initialized and t.sessionID, so the next iteration
+		// re-initializes under initMu (concurrent callers serialize through
+		// the same mutex, so the server sees one re-initialize, not N). At
+		// most one recovery attempt per CallTool to avoid infinite loops.
+		if errors.Is(err, ErrSessionLost) && !sessionRecoveryAttempted {
+			sessionRecoveryAttempted = true
+			continue
+		}
+
+		// Retryable server errors (500, 502, 503, 504)
 		if isServerError(err) && attempt < maxRetries {
-			lastErr = err
 			select {
 			case <-time.After(mcpBackoff(attempt)):
 			case <-ctx.Done():
@@ -340,12 +382,55 @@ func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args m
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+string(t.token))
+	// Snapshot the session id for the lifetime of this attempt so the 404
+	// detection below knows whether the request carried one.
+	sid := t.loadSessionID()
+	if sid != "" {
+		httpReq.Header.Set("Mcp-Session-Id", sid)
+	}
 
 	resp, err := t.client.Do(httpReq)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close() //nolint:errcheck
+
+	// Session-loss handling on HTTP 404.
+	//
+	// Case A — request DID carry a session id: the server dropped our
+	// session. Clear local state under initMu, paired with a sid-match
+	// check so a stale 404 (from a request sent before another goroutine
+	// already recovered) does not clobber a freshly re-initialized
+	// session and cause a re-init cascade under heavy concurrency.
+	//
+	// Case B — request did NOT carry a session id, but the live session
+	// state has changed since our snapshot: a concurrent goroutine cleared
+	// or replaced the session between our init-guard fast-load and the
+	// sessionID snapshot at the top of this function. The 404 reflects
+	// that race, not a missing-tool error. Signal session loss so the
+	// caller's recovery path can re-initialize and retry. Checking both
+	// "session id now non-empty" and "transport no longer initialized"
+	// catches both halves of the clear+re-init window.
+	//
+	// Case C — request had no session id AND the live state is unchanged
+	// (still no session, still initialized): the server simply does not
+	// enforce sessions (backward-compat path) and the 404 is a genuine
+	// missing-tool / bad-URL response. Fall through to the existing
+	// error path.
+	if resp.StatusCode == http.StatusNotFound {
+		if sid != "" {
+			t.initMu.Lock()
+			if t.loadSessionID() == sid {
+				t.initialized.Store(false)
+				t.storeSessionID("")
+			}
+			t.initMu.Unlock()
+			return nil, ErrSessionLost
+		}
+		if t.loadSessionID() != "" || !t.initialized.Load() {
+			return nil, ErrSessionLost
+		}
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, t.handleHTTPError(resp)

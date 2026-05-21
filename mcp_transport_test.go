@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -412,4 +414,243 @@ func TestResponseTimeReport_Unmarshal(t *testing.T) {
 func TestNewMcpTransport_InvalidURL(t *testing.T) {
 	_, err := NewMcpTransport("key", "ftp://example.com")
 	require.Error(t, err, "non-HTTPS non-localhost URL should be rejected")
+}
+
+// ==================== Phase 4: Session-ID Tests ====================
+
+// classifyRequest reads the body and returns the JSON-RPC method ("initialize"
+// or "tools/call" or other). Restores the body via io.NopCloser so handlers
+// remain free to inspect or echo it if needed.
+func classifyRequest(t *testing.T, r *http.Request) string {
+	t.Helper()
+	body, err := io.ReadAll(r.Body)
+	require.NoError(t, err)
+	var req JSONRPCRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+	return req.Method
+}
+
+// Test 1.16: Mcp-Session-Id captured on initialize.
+func TestMCPTransport_SessionID_CapturedOnInitialize(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Mcp-Session-Id", "test-sess-abc")
+		require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+	_, err = transport.Initialize(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, "test-sess-abc", transport.loadSessionID())
+}
+
+// Test 1.17: Mcp-Session-Id propagated on every subsequent tools/call.
+func TestMCPTransport_SessionID_PropagatedOnCallTool(t *testing.T) {
+	const expectedSID = "test-sess-abc"
+	var (
+		mu              sync.Mutex
+		toolCallHeaders []string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := classifyRequest(t, r)
+		if method == "initialize" {
+			w.Header().Set("Mcp-Session-Id", expectedSID)
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+			return
+		}
+		mu.Lock()
+		toolCallHeaders = append(toolCallHeaders, r.Header.Get("Mcp-Session-Id"))
+		mu.Unlock()
+		require.NoError(t, json.NewEncoder(w).Encode(mockStatusSummaryResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	for i := 0; i < 5; i++ {
+		_, err := transport.CallTool(context.Background(), "get_status_summary", nil)
+		require.NoError(t, err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, toolCallHeaders, 5)
+	for i, got := range toolCallHeaders {
+		require.Equal(t, expectedSID, got, "call %d carried wrong session id", i+1)
+	}
+}
+
+// Test 1.18: backward compatible when server issues no Mcp-Session-Id.
+func TestMCPTransport_NoSessionID_BackwardCompat(t *testing.T) {
+	var (
+		mu              sync.Mutex
+		toolCallHeaders []string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := classifyRequest(t, r)
+		if method == "initialize" {
+			// Deliberately no Mcp-Session-Id header.
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+			return
+		}
+		mu.Lock()
+		toolCallHeaders = append(toolCallHeaders, r.Header.Get("Mcp-Session-Id"))
+		mu.Unlock()
+		require.NoError(t, json.NewEncoder(w).Encode(mockStatusSummaryResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	for i := 0; i < 3; i++ {
+		_, err := transport.CallTool(context.Background(), "get_status_summary", nil)
+		require.NoError(t, err)
+	}
+
+	require.Equal(t, "", transport.loadSessionID())
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, toolCallHeaders, 3)
+	for i, got := range toolCallHeaders {
+		require.Equal(t, "", got, "call %d should not have set Mcp-Session-Id", i+1)
+	}
+}
+
+// Test 1.19: HTTP 404 on a session-bearing request triggers one re-initialize
+// and a retry, both observable in the server's request sequence.
+func TestMCPTransport_SessionLossRecovery(t *testing.T) {
+	var (
+		initCount atomic.Int64
+		callCount atomic.Int64
+		seqMu     sync.Mutex
+		sequence  []string
+	)
+	record := func(method string) {
+		seqMu.Lock()
+		sequence = append(sequence, method)
+		seqMu.Unlock()
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := classifyRequest(t, r)
+		record(method)
+		if method == "initialize" {
+			n := initCount.Add(1)
+			w.Header().Set("Mcp-Session-Id", fmt.Sprintf("sess-%d", n))
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+			return
+		}
+		// tools/call
+		n := callCount.Add(1)
+		if n == 1 {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(mockStatusSummaryResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	result, err := transport.CallTool(context.Background(), "get_status_summary", nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "sess-2", transport.loadSessionID())
+
+	seqMu.Lock()
+	defer seqMu.Unlock()
+	require.Equal(t, []string{"initialize", "tools/call", "initialize", "tools/call"}, sequence)
+}
+
+// Test 1.20: 20 concurrent callers see at most ONE re-initialize after a
+// session loss. The init mutex serializes recovery so the server is not
+// stampeded with parallel initialize attempts.
+func TestMCPTransport_SessionLoss_NoStampede(t *testing.T) {
+	var (
+		initCount atomic.Int64
+		callCount atomic.Int64
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := classifyRequest(t, r)
+		if method == "initialize" {
+			n := initCount.Add(1)
+			w.Header().Set("Mcp-Session-Id", fmt.Sprintf("sess-%d", n))
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+			return
+		}
+		// tools/call: 404 until the second initialize has landed; then accept
+		// only the latest session id (sess-2) and respond 200.
+		callCount.Add(1)
+		if initCount.Load() < 2 {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		want := fmt.Sprintf("sess-%d", initCount.Load())
+		if r.Header.Get("Mcp-Session-Id") != want {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(mockStatusSummaryResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	const N = 20
+	var wg sync.WaitGroup
+	errs := make([]error, N)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			_, e := transport.CallTool(context.Background(), "get_status_summary", nil)
+			errs[idx] = e
+		}(i)
+	}
+	wg.Wait()
+
+	require.Equal(t, int64(2), initCount.Load(),
+		"server saw %d initialize requests; want exactly 2", initCount.Load())
+	require.Equal(t, "sess-2", transport.loadSessionID())
+	for i, e := range errs {
+		require.NoError(t, e, "goroutine %d failed", i)
+	}
+}
+
+// Test 1.21: when the retried call also returns session-loss, CallTool stops
+// after exactly one recovery attempt and surfaces ErrSessionLost.
+func TestMCPTransport_SessionLossRecoveryFailsTwice(t *testing.T) {
+	var (
+		initCount atomic.Int64
+		callCount atomic.Int64
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := classifyRequest(t, r)
+		if method == "initialize" {
+			n := initCount.Add(1)
+			w.Header().Set("Mcp-Session-Id", fmt.Sprintf("sess-%d", n))
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+			return
+		}
+		callCount.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	_, err = transport.CallTool(context.Background(), "get_status_summary", nil)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrSessionLost),
+		"expected ErrSessionLost, got %T: %v", err, err)
+	require.Equal(t, int64(2), initCount.Load(),
+		"server saw %d initialize requests; want exactly 2 (one initial + one recovery)", initCount.Load())
+	require.Equal(t, int64(2), callCount.Load(),
+		"server saw %d tools/call requests; want exactly 2", callCount.Load())
 }
