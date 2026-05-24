@@ -50,7 +50,7 @@ type ReportsAPI interface {
 // This interface enables mocking in unit tests.
 type OutageAPI interface {
 	GetOutage(ctx context.Context, uuid string) (*Outage, error)
-	ListOutages(ctx context.Context) ([]Outage, error)
+	ListOutages(ctx context.Context, opts ...OutageListOption) ([]Outage, error)
 	CreateOutage(ctx context.Context, req CreateOutageRequest) (*Outage, error)
 	AcknowledgeOutage(ctx context.Context, uuid string) (*OutageAction, error)
 	UnacknowledgeOutage(ctx context.Context, uuid string) (*OutageAction, error)
