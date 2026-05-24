@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `ListOutages` now accepts functional options. `WithStatus("all"|"ongoing"|"resolved")` adds the corresponding `status` query parameter so callers can let the Hyperping API filter outages server-side instead of paginating through the full history. The no-option call is unchanged and omits the parameter entirely.
+
 ## [0.5.0] - 2026-05-21
 
 ### Fixed
