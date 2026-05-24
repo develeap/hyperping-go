@@ -8,8 +8,36 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 )
+
+// outageListOptions holds optional parameters for ListOutages.
+type outageListOptions struct {
+	status string
+}
+
+// OutageListOption configures a ListOutages call.
+type OutageListOption func(*outageListOptions)
+
+// WithStatus filters the outage list by status.
+//
+// Accepted values: "all", "ongoing", "resolved".
+// An empty string (the zero value) leaves the parameter unset so the server's
+// default applies. Validation happens inside ListOutages so that this
+// constructor remains a pure value setter.
+func WithStatus(s string) OutageListOption {
+	return func(o *outageListOptions) {
+		o.status = s
+	}
+}
+
+// validOutageStatuses lists the values accepted by WithStatus.
+var validOutageStatuses = map[string]struct{}{
+	"all":      {},
+	"ongoing":  {},
+	"resolved": {},
+}
 
 // outageListResponse holds the parsed outage list along with pagination metadata.
 type outageListResponse struct {
@@ -77,11 +105,29 @@ const maxOutagePaginationPages = 100
 //   - Direct array: [{...}, {...}]
 //   - Wrapped in "outages": {"outages": [{...}], "hasNextPage": bool}
 //   - Wrapped in "data": {"data": [{...}]}
-func (c *Client) ListOutages(ctx context.Context) ([]Outage, error) {
+//
+// Optional filters are applied via functional options (see WithStatus).
+func (c *Client) ListOutages(ctx context.Context, opts ...OutageListOption) ([]Outage, error) {
+	var options outageListOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	if options.status != "" {
+		if _, ok := validOutageStatuses[options.status]; !ok {
+			return nil, fmt.Errorf("ListOutages: invalid status %q (must be one of: all, ongoing, resolved)", options.status)
+		}
+	}
+
 	var allOutages []Outage
 
 	for page := 0; page < maxOutagePaginationPages; page++ {
-		path := OutagesBasePath + "?page=" + strconv.Itoa(page)
+		query := url.Values{}
+		query.Set("page", strconv.Itoa(page))
+		if options.status != "" {
+			query.Set("status", options.status)
+		}
+		path := OutagesBasePath + "?" + query.Encode()
 
 		var rawResponse json.RawMessage
 		if err := c.doRequest(ctx, http.MethodGet, path, nil, &rawResponse); err != nil {
