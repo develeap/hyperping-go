@@ -267,15 +267,43 @@ func (t *McpTransport) handleJSONRPCError(resp *JSONRPCResponse) error {
 // calls.
 //
 // Concurrency:
-//   - Calling Initialize directly is safe to use once before any CallTool.
+//   - Initialize is safe to call concurrently from multiple goroutines.
+//     The stampede guard (initInflightMu, double-checked locking via
+//     initialized.Load) ensures only one goroutine performs the actual
+//     handshake; subsequent callers short-circuit on the published state
+//     and return immediately. Without this guard a worker pool that
+//     pre-initialized would issue N parallel handshakes against the
+//     server.
 //   - Calling Initialize concurrently with in-flight CallTool requests is
 //     permitted (no deadlock, no data corruption), but may cause a CallTool
 //     in the middle of callToolOnce to surface ErrSessionLost spuriously
-//     for a backward-compat 404 — the race between the snapshot at the top
+//     for a backward-compat 404. The race between the snapshot at the top
 //     of callToolOnce and a session id newly issued mid-call is treated as
 //     session-loss by the recovery path. In steady-state usage, prefer
 //     letting CallTool's built-in init guard manage initialization.
 func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
+	// Fast path: already initialized, no handshake needed. This matches
+	// ensureInitialized's behavior so direct callers get the same
+	// short-circuit. Return value is nil because we have no fresh
+	// initialize-response payload to surface; callers that need that
+	// payload must run Initialize exactly once before any concurrent
+	// secondary callers.
+	if t.initialized.Load() {
+		return nil, nil
+	}
+	t.initInflightMu.Lock()
+	defer t.initInflightMu.Unlock()
+	if t.initialized.Load() {
+		return nil, nil
+	}
+	return t.initializeLocked(ctx)
+}
+
+// initializeLocked performs the actual handshake. The caller must hold
+// initInflightMu so concurrent Initialize/ensureInitialized callers are
+// serialized; the publish-step writes still pair with initMu inside
+// initializeAttempt.
+func (t *McpTransport) initializeLocked(ctx context.Context) (map[string]any, error) {
 	req := JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      t.nextID(),
@@ -403,7 +431,7 @@ func (t *McpTransport) ensureInitialized(ctx context.Context) error {
 	if t.initialized.Load() {
 		return nil
 	}
-	_, err := t.Initialize(ctx)
+	_, err := t.initializeLocked(ctx)
 	return err
 }
 
