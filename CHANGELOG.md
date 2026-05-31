@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 
-- The two deferred stdlib CVEs (`golang.org/x/net` GO-2025-3373, Go stdlib GO-2025-3447) remain unpatched in `go.mod`; they require a Go toolchain bump and are tracked separately.
+- Two stdlib vulnerabilities surfaced by `govulncheck` remain unpatched in `go.mod`: GO-2026-4971 (net dial NUL-byte panic on Windows) and GO-2026-4918 (HTTP/2 SETTINGS_MAX_FRAME_SIZE infinite loop). Both fix in Go 1.26.3; a toolchain bump is tracked separately.
 
 ## [0.6.1] - 2026-05-31
 
