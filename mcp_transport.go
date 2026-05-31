@@ -351,7 +351,7 @@ func (t *McpTransport) initializeAttempt(ctx context.Context, body []byte) (map[
 	}
 
 	var rpcResp JSONRPCResponse
-	if err := decodeJSONRPCResponse(resp.Body, &rpcResp); err != nil {
+	if err := decodeJSONRPCResponse(resp, &rpcResp); err != nil {
 		return nil, false, err
 	}
 
@@ -567,7 +567,7 @@ func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args m
 	}
 
 	var rpcResp JSONRPCResponse
-	if err := decodeJSONRPCResponse(resp.Body, &rpcResp); err != nil {
+	if err := decodeJSONRPCResponse(resp, &rpcResp); err != nil {
 		return nil, err
 	}
 
@@ -622,15 +622,30 @@ func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args m
 	return parsed, nil
 }
 
-// decodeJSONRPCResponse decodes a JSON-RPC envelope from r with a hard cap of
-// maxResponseBodyBytes (10 MB, mirrors the REST path's readResponseBody).
-// Reads up to maxResponseBodyBytes+1 so a body that exactly fills the cap
-// passes while one larger fails with an explicit "response body exceeds
-// maximum size" error. Using io.LimitReader before json.NewDecoder prevents
-// a malicious or compromised MCP server from streaming arbitrary bytes
-// through the decoder and exhausting client memory.
-func decodeJSONRPCResponse(r io.Reader, v *JSONRPCResponse) error {
-	limited := io.LimitReader(r, int64(maxResponseBodyBytes)+1)
+// decodeJSONRPCResponse decodes a JSON-RPC envelope from resp with a hard
+// cap of maxResponseBodyBytes (10 MB, mirrors the REST path's
+// readResponseBody).
+//
+// Two-stage size enforcement:
+//
+//  1. If resp.ContentLength is non-negative and already exceeds the cap,
+//     return the sentinel error WITHOUT touching the body. This bounds
+//     memory even before the first read: a malicious server advertising
+//     a multi-gigabyte payload is rejected for free.
+//
+//  2. Otherwise, read through an io.LimitReader of cap+1 and reject if the
+//     body itself runs over. This catches servers that lie about
+//     Content-Length or send chunked transfer with no length up front.
+//
+// Returning the sentinel via the same string in both branches keeps the
+// error contract stable for callers and for the audit-driven test that
+// asserts no body bytes are read when Content-Length already trips the
+// cap.
+func decodeJSONRPCResponse(resp *http.Response, v *JSONRPCResponse) error {
+	if resp.ContentLength > int64(maxResponseBodyBytes) {
+		return fmt.Errorf("MCP response body exceeds maximum size of %d bytes", maxResponseBodyBytes)
+	}
+	limited := io.LimitReader(resp.Body, int64(maxResponseBodyBytes)+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {
 		return fmt.Errorf("failed to read MCP response body: %w", err)
