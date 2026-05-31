@@ -46,7 +46,7 @@ require (
 	github.com/ysmood/gson v0.7.3 // indirect
 	github.com/ysmood/leakless v0.9.0 // indirect
 	github.com/zclconf/go-cty v1.18.0 // indirect
-	golang.org/x/net v0.52.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 )
