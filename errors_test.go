@@ -644,9 +644,13 @@ func TestSanitizeMessage(t *testing.T) {
 			expected: "Authorization: ***REDACTED***",
 		},
 		{
-			name:     "authorization in comma-separated list keeps tail intact",
+			// Line-bounded redaction necessarily eats anything trailing on
+			// the same line; losing the Accept value here is acceptable
+			// because Digest and AWS SigV4 credentials live past the first
+			// comma and must not survive.
+			name:     "comma-separated headers - over-redacts for safety",
 			input:    "headers=[Authorization: Bearer abc123, Accept: application/json]",
-			expected: "headers=[Authorization: ***REDACTED***, Accept: application/json]",
+			expected: "headers=[Authorization: ***REDACTED***",
 		},
 		{
 			name:     "bare bearer token outside authorization context",
