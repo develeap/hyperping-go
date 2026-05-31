@@ -962,6 +962,97 @@ func TestNewMcpTransport_CustomHTTPClient_BlocksCleartextHTTP(t *testing.T) {
 		"error should come from the TLS enforcement layer; got %v", err)
 }
 
+// Test (audit HIGH-3): initializeAttempt must hold initMu while writing
+// the (sessionID, initialized) pair, so the 404-clear path cannot interleave
+// between those two writes and produce a torn state.
+//
+// Direct structural assertion: hold initMu in the test goroutine, then
+// kick off Initialize concurrently. With the fix, initializeAttempt blocks
+// on initMu before publishing either write, so until the test releases the
+// mutex, the transport state stays clean. Without the fix, initializeAttempt
+// publishes both writes immediately and the test goroutine sees the published
+// state while still holding the mutex (proving the writes happen outside the
+// critical section).
+func TestMCPTransport_InitializeAttempt_WritesUnderInitMu(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Mcp-Session-Id", "sess-test")
+		require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	// Take initMu in the test goroutine. With the fix, any concurrent
+	// Initialize must block on this mutex before publishing the sessionID
+	// and initialized writes. Without the fix, Initialize completes both
+	// writes regardless.
+	transport.initMu.Lock()
+
+	done := make(chan error, 1)
+	go func() {
+		_, e := transport.Initialize(context.Background())
+		done <- e
+	}()
+
+	// Give the background goroutine time to run its HTTP request and reach
+	// the write step. With the fix, it will block on initMu. Without the
+	// fix, it will complete the writes.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if transport.initialized.Load() || transport.loadSessionID() != "" {
+			// State was published while we still hold initMu.
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	gotInit := transport.initialized.Load()
+	gotSID := transport.loadSessionID()
+
+	// Release the mutex so the background Initialize can finish.
+	transport.initMu.Unlock()
+	require.NoError(t, <-done)
+
+	require.Falsef(t, gotInit,
+		"initialized was published while initMu was held by another goroutine; write happened outside the critical section")
+	require.Emptyf(t, gotSID,
+		"sessionID was published while initMu was held by another goroutine; got %q", gotSID)
+}
+
+// Test (audit HIGH-3, b): concurrent Initialize calls do not deadlock and
+// always leave the transport in a consistent (initialized=true, sessionID!="")
+// state. Runs with -race to also catch any data race in the publish step.
+func TestMCPTransport_ConcurrentInitialize_ConsistentFinalState(t *testing.T) {
+	var seq atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := seq.Add(1)
+		time.Sleep(5 * time.Millisecond)
+		w.Header().Set("Mcp-Session-Id", fmt.Sprintf("sess-%d", n))
+		require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	const N = 16
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = transport.Initialize(context.Background())
+		}()
+	}
+	wg.Wait()
+
+	require.True(t, transport.initialized.Load(),
+		"after concurrent Initialize, transport.initialized must be true")
+	require.NotEmpty(t, transport.loadSessionID(),
+		"after concurrent Initialize with initialized=true, sessionID must be non-empty")
+}
+
 // Test (audit CRITICAL-1, b): Initialize must also cap response body.
 func TestMCPTransport_Initialize_RejectsOversizedResponse(t *testing.T) {
 	const oversizeBytes = 50 * 1024 * 1024
