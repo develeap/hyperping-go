@@ -653,6 +653,74 @@ func TestSanitizeMessage(t *testing.T) {
 			expected: "headers=[Authorization: ***REDACTED***",
 		},
 		{
+			name:     "digest authorization with response hash",
+			input:    `Authorization: Digest username="alice", realm="r", nonce="n", response="5ccc069c403ebaf9f0171e9517f40e41"`,
+			expected: "Authorization: ***REDACTED***",
+		},
+		{
+			name:     "aws sigv4 authorization with signature",
+			input:    "Authorization: AWS4-HMAC-SHA256 Credential=AKID/20251231/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=abc123",
+			expected: "Authorization: ***REDACTED***",
+		},
+		{
+			name:     "authorization appears twice in one message",
+			input:    "first Authorization: Bearer aaa\nsecond Authorization: Basic bbb",
+			expected: "first Authorization: ***REDACTED***\nsecond Authorization: ***REDACTED***",
+		},
+		{
+			name:     "tab separator between scheme and value",
+			input:    "Authorization:\tBearer abc123",
+			expected: "Authorization: ***REDACTED***",
+		},
+		{
+			name:     "empty authorization value does not panic or over-match",
+			input:    "Authorization:",
+			expected: "Authorization:",
+		},
+		{
+			name:     "multi-header line with CRLF separators preserves neighbours",
+			input:    "Host: api.example.com\r\nAuthorization: Bearer secret\r\nAccept: application/json",
+			expected: "Host: api.example.com\r\nAuthorization: ***REDACTED***\r\nAccept: application/json",
+		},
+		{
+			name:     "cookie header with semicolons",
+			input:    "Cookie: session=abc; user=alice",
+			expected: "Cookie: ***REDACTED***",
+		},
+		{
+			name:     "set-cookie header with attributes",
+			input:    "Set-Cookie: foo=bar; Domain=example.com; Secure; HttpOnly",
+			expected: "Set-Cookie: ***REDACTED***",
+		},
+		{
+			name:     "x-api-key header",
+			input:    "X-Api-Key: sk_test_abc123",
+			expected: "X-Api-Key: ***REDACTED***",
+		},
+		{
+			name:     "x-auth-token header with jwt-like value",
+			input:    "X-Auth-Token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature",
+			expected: "X-Auth-Token: ***REDACTED***",
+		},
+		{
+			name:     "proxy-authorization header",
+			input:    "Proxy-Authorization: Basic dXNlcjpwYXNz",
+			expected: "Proxy-Authorization: ***REDACTED***",
+		},
+		{
+			// Documents that the JSON-encoded form (`"Authorization":` with
+			// a quote between the name and the colon) is NOT caught by the
+			// Authorization header pattern, which requires `Authorization:`
+			// followed by whitespace. The bare-Bearer pattern also misses
+			// the short `xxx` placeholder. This is captured so future
+			// changes to either regex do not silently weaken behavior on
+			// real-world JSON payloads (longer tokens with digits / dashes
+			// would still be caught by the bare-Bearer pass).
+			name:     "json-form authorization is a documented gap",
+			input:    `{"Authorization": "Bearer xxx"}`,
+			expected: `{"Authorization": "Bearer xxx"}`,
+		},
+		{
 			name:     "bare bearer token outside authorization context",
 			input:    "curl -H Bearer ghp_1234567890abcdef done",
 			expected: "curl -H Bearer ***REDACTED*** done",
