@@ -30,7 +30,7 @@ const (
 	// together. Keeping this as a const rather than a `WithVersion()` option
 	// is deliberate: server-side telemetry should observe the actual SDK
 	// version, not a value chosen by the consumer.
-	sdkVersion = "0.5.0"
+	sdkVersion = "0.6.2"
 	// mcpAcceptHeader is required by MCP 2025-03-26 Streamable HTTP: the
 	// server may respond with either application/json or text/event-stream
 	// at its discretion, so clients must accept both even if they only
