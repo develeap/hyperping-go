@@ -152,7 +152,7 @@ func NewMcpTransport(apiKey string, baseURL string, opts ...TransportOption) (*M
 	t := &McpTransport{
 		client: &http.Client{
 			Timeout:   DefaultMCPTimeout,
-			Transport: buildTransportChain([]byte(apiKey), baseTransport, resolvedURL),
+			Transport: baseTransport,
 		},
 		url:        resolvedURL,
 		token:      []byte(apiKey),
@@ -162,6 +162,21 @@ func NewMcpTransport(apiKey string, baseURL string, opts ...TransportOption) (*M
 	for _, opt := range opts {
 		opt(t)
 	}
+
+	// Re-wrap the (possibly option-supplied) client's transport through the
+	// auth + TLS chain AFTER options run. Without this step, a caller using
+	// WithMCPHTTPClient with a default *http.Client would lose defaultTLSConfig
+	// (TLS 1.2+ floor and AEAD cipher restrictions) and the authTransport
+	// wrapper, opening a downgrade-to-cleartext path that would leak the
+	// manually-attached Bearer token (audit CRITICAL-2).
+	if t.client == nil {
+		t.client = &http.Client{Timeout: DefaultMCPTimeout}
+	}
+	inner := t.client.Transport
+	if inner == nil {
+		inner = http.DefaultTransport
+	}
+	t.client.Transport = buildTransportChain(t.token, inner, resolvedURL)
 
 	return t, nil
 }
