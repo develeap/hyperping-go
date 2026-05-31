@@ -101,7 +101,27 @@ func enforceTLS(transport http.RoundTripper, baseURL string) http.RoundTripper {
 		return &tlsEnforcedTransport{next: transport}
 	}
 
-	// Apply our TLS config to the standard transport
-	httpTransport.TLSClientConfig = defaultTLSConfig()
-	return httpTransport
+	// Clone before mutating: a caller may have configured TLSClientConfig
+	// already (custom RootCAs, ServerName, client certs). Reassigning
+	// httpTransport.TLSClientConfig in place silently drags the caller's
+	// transport into our security profile and discards their config. Clone
+	// the transport, clone (or freshly create) the TLSClientConfig, then
+	// layer our minimums on top: MinVersion is raised to TLS 1.2 if the
+	// caller asked for something lower, CipherSuites are set only when the
+	// caller did not supply their own (so caller-specified suites win).
+	cloned := httpTransport.Clone()
+	var tlsCfg *tls.Config
+	if cloned.TLSClientConfig != nil {
+		tlsCfg = cloned.TLSClientConfig.Clone()
+	} else {
+		tlsCfg = &tls.Config{}
+	}
+	if tlsCfg.MinVersion < tls.VersionTLS12 {
+		tlsCfg.MinVersion = tls.VersionTLS12
+	}
+	if len(tlsCfg.CipherSuites) == 0 {
+		tlsCfg.CipherSuites = defaultTLSConfig().CipherSuites
+	}
+	cloned.TLSClientConfig = tlsCfg
+	return cloned
 }
