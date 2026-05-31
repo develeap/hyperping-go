@@ -212,10 +212,12 @@ func (t *McpTransport) handleHTTPError(resp *http.Response) error {
 	case http.StatusNotFound:
 		return ErrNotFound
 	case http.StatusTooManyRequests:
-		retryAfter := 0
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			fmt.Sscanf(ra, "%d", &retryAfter) //nolint:errcheck
-		}
+		// Reuse the REST path's parser so the value is clamped to
+		// maxRetryAfterSeconds and supports both integer-seconds and
+		// HTTP-date formats. Without the clamp a hostile server could
+		// return Retry-After: 86400 and force a 24-hour wait on any
+		// caller that respects the value (audit MEDIUM-6).
+		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
 		return &APIError{
 			StatusCode: 429,
 			Message:    "rate limit exceeded",
