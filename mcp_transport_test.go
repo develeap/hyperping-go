@@ -874,6 +874,94 @@ func TestMCPTransport_CallTool_RejectsOversizedResponse(t *testing.T) {
 		"error should mention oversized response; got %v", err)
 }
 
+// Test (audit CRITICAL-2): WithMCPHTTPClient must not bypass the TLS
+// enforcement + auth-transport chain.
+//
+// A user passing a custom *http.Client (e.g. for metrics or proxy support)
+// would previously have its default transport substituted in wholesale,
+// dropping defaultTLSConfig (TLS 1.2+ floor and AEAD cipher suites) AND
+// dropping the authTransport that injects the Bearer header. The Bearer
+// is still manually set on the request in initializeAttempt/callToolOnce,
+// so the practical risk is that a downgrade-to-cleartext attack ships the
+// token over plain HTTP.
+//
+// We assert one of two contracts:
+//   - the constructor errors, OR
+//   - after the option runs, the http.Client.Transport is wrapped through
+//     buildTransportChain so the top-level RoundTripper is *authTransport
+//     and the inner layer enforces TLS for HTTPS URLs.
+func TestNewMcpTransport_CustomHTTPClient_PreservesTLSAndAuthChain(t *testing.T) {
+	custom := &http.Client{Transport: &http.Transport{}}
+	transport, err := NewMcpTransport(
+		"test-key",
+		"https://api.hyperping.io/v1/mcp",
+		WithMCPHTTPClient(custom),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, transport)
+
+	// The transport's http.Client must have its Transport re-wrapped so the
+	// top layer is the auth/transport chain, not the bare *http.Transport
+	// the caller supplied. Without the fix, transport.client.Transport ==
+	// custom.Transport (a plain *http.Transport) and both checks fail.
+	rt := transport.client.Transport
+	require.NotNil(t, rt, "client transport must not be nil")
+	authT, ok := rt.(*authTransport)
+	require.True(t, ok,
+		"expected top-level transport to be *authTransport after WithMCPHTTPClient, got %T", rt)
+	require.Equal(t, []byte("test-key"), authT.token, "auth token must propagate")
+
+	// For an HTTPS base URL on a non-localhost host, the inner transport
+	// must be the standard *http.Transport with our defaultTLSConfig applied
+	// (TLS 1.2 minimum, restricted cipher suites). For custom non-*http.Transport
+	// inners, it would be wrapped in *tlsEnforcedTransport. Either path is
+	// acceptable; both prove the chain was rebuilt.
+	switch inner := authT.next.(type) {
+	case *http.Transport:
+		require.NotNil(t, inner.TLSClientConfig,
+			"HTTPS transport must have TLSClientConfig set after option re-wrap")
+		require.Equal(t, uint16(0x0303), inner.TLSClientConfig.MinVersion,
+			"TLSClientConfig.MinVersion must be TLS 1.2")
+	case *tlsEnforcedTransport:
+		// acceptable
+	default:
+		t.Fatalf("expected inner transport to be *http.Transport with TLS config or *tlsEnforcedTransport, got %T", inner)
+	}
+}
+
+// Test (audit CRITICAL-2, b): WithMCPHTTPClient with a non-*http.Transport
+// custom RoundTripper must result in either an error from the constructor
+// OR a chain that blocks cleartext HTTP for non-localhost URLs.
+func TestNewMcpTransport_CustomHTTPClient_BlocksCleartextHTTP(t *testing.T) {
+	// A mockRoundTripper records the request; we then attempt an HTTP probe.
+	mockRT := &mockRoundTripper{
+		response: &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(""))},
+	}
+	custom := &http.Client{Transport: mockRT}
+
+	// HTTPS base URL so the constructor doesn't reject up front.
+	transport, err := NewMcpTransport(
+		"test-key",
+		"https://api.hyperping.io/v1/mcp",
+		WithMCPHTTPClient(custom),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, transport)
+
+	// Now issue a probe HTTP request through the resulting client. If the
+	// transport chain was correctly re-wrapped, this should be blocked at
+	// the tlsEnforcedTransport layer.
+	req, err := http.NewRequest(http.MethodGet, "http://api.hyperping.io/probe", nil)
+	require.NoError(t, err)
+	_, err = transport.client.Do(req)
+	require.Error(t, err,
+		"cleartext HTTP probe should be blocked by tlsEnforcedTransport after re-wrap")
+	require.True(t,
+		strings.Contains(err.Error(), "HTTPS required") ||
+			strings.Contains(err.Error(), "tlsEnforcedTransport"),
+		"error should come from the TLS enforcement layer; got %v", err)
+}
+
 // Test (audit CRITICAL-1, b): Initialize must also cap response body.
 func TestMCPTransport_Initialize_RejectsOversizedResponse(t *testing.T) {
 	const oversizeBytes = 50 * 1024 * 1024
