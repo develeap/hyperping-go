@@ -121,10 +121,27 @@ func NewRateLimitError(retryAfter int) *APIError {
 
 // Compile regexes once for performance.
 // bearerPattern matches any Bearer token of 8+ non-whitespace chars (VULN-019).
+// authHeaderPattern matches any Authorization header, regardless of scheme
+// (Bearer, Basic, Digest, AWS SigV4, etc.). The terminator is line-bounded
+// rather than comma-bounded because multi-field schemes such as RFC 7616
+// Digest and AWS4-HMAC-SHA256 embed their credential (response="<hash>",
+// Signature=<hex>) after one or more commas. RE2 has no lookahead, so the
+// only safe primitive is "redact to end of line"; this over-redacts when
+// callers flatten multiple headers onto one comma-separated line, which is
+// an acceptable tradeoff (security beats prettier debug output).
+//
+// proxyAuthHeaderPattern, cookieHeaderPattern and apiKeyHeaderPattern cover
+// the other common credential-bearing headers that downstream callers
+// (e.g. terraform-provider-hyperping) let users set on monitor probes.
+// This set is not exhaustive; any header not listed here should be treated
+// as potentially sensitive until proven otherwise.
 var (
-	bearerPattern     = regexp.MustCompile(`Bearer\s+(?:[^\s]*[0-9_-][^\s]*|[^\s]{32,})`)
-	urlCredPattern    = regexp.MustCompile(`://[^:]+:[^@]+@`)
-	authHeaderPattern = regexp.MustCompile(`Authorization:\s+Bearer\s+[^\s]+`)
+	bearerPattern          = regexp.MustCompile(`Bearer\s+(?:[^\s]*[0-9_-][^\s]*|[^\s]{32,})`)
+	urlCredPattern         = regexp.MustCompile(`://[^:]+:[^@]+@`)
+	proxyAuthHeaderPattern = regexp.MustCompile(`(?i)Proxy-Authorization:\s+[^\r\n]+`)
+	cookieHeaderPattern    = regexp.MustCompile(`(?i)(?:Set-)?Cookie:\s+[^\r\n]+`)
+	apiKeyHeaderPattern    = regexp.MustCompile(`(?i)X-(?:Api-Key|Auth-Token|Access-Token):\s+[^\r\n]+`)
+	authHeaderPattern      = regexp.MustCompile(`(?i)Authorization:\s+[^\r\n]+`)
 )
 
 // sanitizeMessage removes sensitive information from error messages.
@@ -133,7 +150,27 @@ func sanitizeMessage(msg string) string {
 	// Replace Hyperping API keys (sk_alphanumeric) with redacted placeholder
 	msg = APIKeyPattern.ReplaceAllString(msg, APIKeyPrefix+"***REDACTED***")
 
-	// Replace Authorization headers first (more specific pattern)
+	// Replace credential-bearing headers. Order matters: more specific names
+	// run first so that Proxy-Authorization and Set-Cookie are not partially
+	// clobbered by the broader Authorization / Cookie patterns.
+	msg = proxyAuthHeaderPattern.ReplaceAllString(msg, "Proxy-Authorization: ***REDACTED***")
+	msg = cookieHeaderPattern.ReplaceAllStringFunc(msg, func(match string) string {
+		// Preserve the original header name (Cookie vs Set-Cookie) so the
+		// redacted output still tells the reader which header leaked.
+		if len(match) >= 11 && (match[0] == 'S' || match[0] == 's') {
+			return "Set-Cookie: ***REDACTED***"
+		}
+		return "Cookie: ***REDACTED***"
+	})
+	msg = apiKeyHeaderPattern.ReplaceAllStringFunc(msg, func(match string) string {
+		// Find the colon to recover the original header name.
+		for i := 0; i < len(match); i++ {
+			if match[i] == ':' {
+				return match[:i] + ": ***REDACTED***"
+			}
+		}
+		return match
+	})
 	msg = authHeaderPattern.ReplaceAllString(msg, "Authorization: ***REDACTED***")
 
 	// Replace Bearer tokens

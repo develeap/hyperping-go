@@ -616,3 +616,138 @@ func TestValidationDetail(t *testing.T) {
 		t.Errorf("Message = %q, expected 'URL must be a valid HTTP or HTTPS URL'", detail.Message)
 	}
 }
+
+func TestSanitizeMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "bearer authorization header",
+			input:    "request failed: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig",
+			expected: "request failed: Authorization: ***REDACTED***",
+		},
+		{
+			name:     "basic authorization header",
+			input:    "request failed: Authorization: Basic dXNlcjpwYXNzd29yZA==",
+			expected: "request failed: Authorization: ***REDACTED***",
+		},
+		{
+			name:     "lowercase authorization header still matches case-insensitive",
+			input:    "headers: authorization: Basic dXNlcjpwYXNzd29yZA==",
+			expected: "headers: Authorization: ***REDACTED***",
+		},
+		{
+			name:     "digest authorization header",
+			input:    `Authorization: Digest username="alice"`,
+			expected: "Authorization: ***REDACTED***",
+		},
+		{
+			// Line-bounded redaction necessarily eats anything trailing on
+			// the same line; losing the Accept value here is acceptable
+			// because Digest and AWS SigV4 credentials live past the first
+			// comma and must not survive.
+			name:     "comma-separated headers - over-redacts for safety",
+			input:    "headers=[Authorization: Bearer abc123, Accept: application/json]",
+			expected: "headers=[Authorization: ***REDACTED***",
+		},
+		{
+			name:     "digest authorization with response hash",
+			input:    `Authorization: Digest username="alice", realm="r", nonce="n", response="5ccc069c403ebaf9f0171e9517f40e41"`,
+			expected: "Authorization: ***REDACTED***",
+		},
+		{
+			name:     "aws sigv4 authorization with signature",
+			input:    "Authorization: AWS4-HMAC-SHA256 Credential=AKID/20251231/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=abc123",
+			expected: "Authorization: ***REDACTED***",
+		},
+		{
+			name:     "authorization appears twice in one message",
+			input:    "first Authorization: Bearer aaa\nsecond Authorization: Basic bbb",
+			expected: "first Authorization: ***REDACTED***\nsecond Authorization: ***REDACTED***",
+		},
+		{
+			name:     "tab separator between scheme and value",
+			input:    "Authorization:\tBearer abc123",
+			expected: "Authorization: ***REDACTED***",
+		},
+		{
+			name:     "empty authorization value does not panic or over-match",
+			input:    "Authorization:",
+			expected: "Authorization:",
+		},
+		{
+			name:     "multi-header line with CRLF separators preserves neighbours",
+			input:    "Host: api.example.com\r\nAuthorization: Bearer secret\r\nAccept: application/json",
+			expected: "Host: api.example.com\r\nAuthorization: ***REDACTED***\r\nAccept: application/json",
+		},
+		{
+			name:     "cookie header with semicolons",
+			input:    "Cookie: session=abc; user=alice",
+			expected: "Cookie: ***REDACTED***",
+		},
+		{
+			name:     "set-cookie header with attributes",
+			input:    "Set-Cookie: foo=bar; Domain=example.com; Secure; HttpOnly",
+			expected: "Set-Cookie: ***REDACTED***",
+		},
+		{
+			name:     "x-api-key header",
+			input:    "X-Api-Key: sk_test_abc123",
+			expected: "X-Api-Key: ***REDACTED***",
+		},
+		{
+			name:     "x-auth-token header with jwt-like value",
+			input:    "X-Auth-Token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature",
+			expected: "X-Auth-Token: ***REDACTED***",
+		},
+		{
+			name:     "proxy-authorization header",
+			input:    "Proxy-Authorization: Basic dXNlcjpwYXNz",
+			expected: "Proxy-Authorization: ***REDACTED***",
+		},
+		{
+			// Documents that the JSON-encoded form (`"Authorization":` with
+			// a quote between the name and the colon) is NOT caught by the
+			// Authorization header pattern, which requires `Authorization:`
+			// followed by whitespace. The bare-Bearer pattern also misses
+			// the short `xxx` placeholder. This is captured so future
+			// changes to either regex do not silently weaken behavior on
+			// real-world JSON payloads (longer tokens with digits / dashes
+			// would still be caught by the bare-Bearer pass).
+			name:     "json-form authorization is a documented gap",
+			input:    `{"Authorization": "Bearer xxx"}`,
+			expected: `{"Authorization": "Bearer xxx"}`,
+		},
+		{
+			name:     "bare bearer token outside authorization context",
+			input:    "curl -H Bearer ghp_1234567890abcdef done",
+			expected: "curl -H Bearer ***REDACTED*** done",
+		},
+		{
+			name:     "hyperping api key",
+			input:    "auth failed for sk_abc123def456",
+			expected: "auth failed for sk_***REDACTED***",
+		},
+		{
+			name:     "url credentials",
+			input:    "dial https://user:secret@db.example.com",
+			expected: "dial https://***REDACTED***@db.example.com",
+		},
+		{
+			name:     "no sensitive content unchanged",
+			input:    "monitor not found",
+			expected: "monitor not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeMessage(tt.input)
+			if got != tt.expected {
+				t.Errorf("sanitizeMessage(%q) = %q, expected %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
