@@ -1061,6 +1061,50 @@ func TestNewMcpTransport_CustomHTTPClient_BlocksCleartextHTTP(t *testing.T) {
 		"error should come from the TLS enforcement layer; got %v", err)
 }
 
+// Test (round-2 audit MEDIUM-5): a direct Initialize call must honor the
+// init stampede guard. Previously only ensureInitialized (the lazy path
+// from CallTool) ran under initInflightMu; calling Initialize directly
+// from N goroutines hit the server N times. The fix routes Initialize
+// through the same double-checked locking so a worker pool that
+// pre-initializes does not stampede the server with parallel handshakes.
+func TestMCPTransport_Initialize_ConcurrentCallersHitServerOnce(t *testing.T) {
+	var initCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Slow handler so concurrent callers pile up under the guard.
+		initCount.Add(1)
+		time.Sleep(150 * time.Millisecond)
+		w.Header().Set("Mcp-Session-Id", "sess-stampede")
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	const N = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, N)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, e := transport.Initialize(context.Background())
+			errs <- e
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		require.NoError(t, e)
+	}
+
+	got := initCount.Load()
+	require.Equalf(t, int64(1), got,
+		"concurrent Initialize callers triggered %d server-side handshakes; want exactly 1 (stampede guard must cover direct Initialize, not just ensureInitialized)",
+		got)
+}
+
 // Test (audit HIGH-3): initializeAttempt must hold initMu while writing
 // the (sessionID, initialized) pair, so the 404-clear path cannot interleave
 // between those two writes and produce a torn state.
