@@ -1627,3 +1627,59 @@ func TestMarshalBody(t *testing.T) {
 		}
 	})
 }
+
+// TestValidateBaseURL_RejectsUserinfo covers audit MEDIUM-5: WithBaseURL
+// must reject URLs that embed userinfo, because anything in the userinfo
+// component (user:secret@host) ends up on every outbound request URL and
+// can leak through transport-error text.
+func TestValidateBaseURL_RejectsUserinfo(t *testing.T) {
+	tests := []struct {
+		name      string
+		baseURL   string
+		expectErr bool
+	}{
+		{
+			name:      "HTTPS with user:pass userinfo is rejected",
+			baseURL:   "https://user:pass@api.hyperping.io/",
+			expectErr: true,
+		},
+		{
+			name:      "HTTPS with user-only userinfo is rejected",
+			baseURL:   "https://user@api.hyperping.io/",
+			expectErr: true,
+		},
+		{
+			name:      "HTTPS without userinfo is accepted",
+			baseURL:   "https://api.hyperping.io/",
+			expectErr: false,
+		},
+		{
+			name:      "localhost without userinfo is accepted",
+			baseURL:   "http://localhost:8080",
+			expectErr: false,
+		},
+		{
+			name:      "localhost WITH userinfo is rejected",
+			baseURL:   "http://user:pass@127.0.0.1:8080",
+			expectErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBaseURL(tt.baseURL)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got nil", tt.baseURL)
+				}
+				if !strings.Contains(err.Error(), "userinfo") &&
+					!strings.Contains(err.Error(), "credentials") {
+					t.Errorf("error should mention userinfo / credentials; got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected no error for %q, got %v", tt.baseURL, err)
+			}
+		})
+	}
+}
