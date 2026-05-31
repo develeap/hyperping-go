@@ -874,6 +874,105 @@ func TestMCPTransport_CallTool_RejectsOversizedResponse(t *testing.T) {
 		"error should mention oversized response; got %v", err)
 }
 
+// Test (round-2 audit HIGH-2): the OOM cap must be enforced via a
+// Content-Length pre-flight, not by streaming bytes through the decoder and
+// hoping the size check fires before memory pressure. The previous test
+// only proved that an over-sized stream eventually surfaces an error; it
+// did NOT prove that memory was bounded, because httptest can also
+// close the connection mid-stream and surface an io.ErrUnexpectedEOF that
+// looks like a successful "guard fired" assertion.
+//
+// This test wires a custom RoundTripper that returns a fake *http.Response
+// with Content-Length set to 999_999_999 and a counting body. With the
+// fix in place, decodeJSONRPCResponse must inspect resp.ContentLength,
+// return the sentinel oversized error without reading any bytes, and the
+// counter must remain at zero.
+func TestMCPTransport_CallTool_RejectsOversizedContentLength_NoBodyRead(t *testing.T) {
+	// readCounter wraps an io.Reader to count bytes that the SUT actually
+	// pulls from the body. With the Content-Length pre-flight in place the
+	// count must stay at 0 because the SUT short-circuits before touching
+	// resp.Body.
+	type readCounter struct {
+		inner io.Reader
+		n     *atomic.Int64
+	}
+	read := func(rc *readCounter, p []byte) (int, error) {
+		n, err := rc.inner.Read(p)
+		rc.n.Add(int64(n))
+		return n, err
+	}
+
+	var bodyBytesRead atomic.Int64
+	// fakeRT serves a normal initialize first (so ensureInitialized succeeds)
+	// and an oversized-Content-Length response for tools/call.
+	type fakeRT struct {
+		t        *testing.T
+		callSeen atomic.Int32
+	}
+	rt := &fakeRT{t: t}
+	roundTrip := func(req *http.Request) (*http.Response, error) {
+		bodyBytes, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		var rpc JSONRPCRequest
+		require.NoError(t, json.Unmarshal(bodyBytes, &rpc))
+		if rpc.Method == "initialize" {
+			rt.callSeen.Add(1)
+			buf, err := json.Marshal(mockInitializeResponse)
+			require.NoError(t, err)
+			return &http.Response{
+				StatusCode:    200,
+				Header:        http.Header{"Content-Type": []string{"application/json"}},
+				Body:          io.NopCloser(strings.NewReader(string(buf))),
+				ContentLength: int64(len(buf)),
+				Request:       req,
+			}, nil
+		}
+		// tools/call: report a huge Content-Length but ship a small body.
+		// The SUT must trust the Content-Length advertisement and refuse
+		// to read.
+		bodyText := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"tiny"}]}}`
+		rc := &readCounter{inner: strings.NewReader(bodyText), n: &bodyBytesRead}
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(readerFunc(func(p []byte) (int, error) {
+				return read(rc, p)
+			})),
+			ContentLength: 999_999_999,
+			Request:       req,
+		}, nil
+	}
+
+	custom := &http.Client{Transport: roundTripFunc(roundTrip)}
+	transport, err := NewMcpTransport(
+		"test-key",
+		"https://api.hyperping.io/v1/mcp",
+		WithMCPHTTPClient(custom),
+	)
+	require.NoError(t, err)
+
+	_, err = transport.CallTool(context.Background(), "get_status_summary", nil)
+	require.Error(t, err, "oversized Content-Length must produce an error")
+	require.True(t,
+		strings.Contains(err.Error(), "exceeds") ||
+			strings.Contains(err.Error(), "too large"),
+		"error should mention size; got %v", err)
+	require.Equal(t, int64(0), bodyBytesRead.Load(),
+		"body must not be read when Content-Length already exceeds the cap; read %d bytes",
+		bodyBytesRead.Load())
+}
+
+// roundTripFunc adapts a function value to http.RoundTripper for the
+// Content-Length pre-flight test.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// readerFunc adapts a function value to io.Reader for the same purpose.
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+
 // Test (audit CRITICAL-2): WithMCPHTTPClient must not bypass the TLS
 // enforcement + auth-transport chain.
 //
