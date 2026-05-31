@@ -772,6 +772,39 @@ func TestSanitizeMessage(t *testing.T) {
 			input:    "monitor not found",
 			expected: "monitor not found",
 		},
+		// Round-2 audit HIGH-1: RFC 6750 challenge parameters must NOT be
+		// treated as Bearer credentials. The original regex captured any
+		// `Bearer \S{6,}` and clobbered the realm / error / scope diagnostic
+		// info that the server returns in WWW-Authenticate. The fix narrows
+		// the redaction to "Bearer followed by an opaque token", i.e. a
+		// captured group that does NOT start with one of the well-known
+		// challenge-parameter prefixes (realm=, scope=, error=, etc.).
+		{
+			name:     "bearer realm challenge parameter is preserved",
+			input:    `WWW-Authenticate: Bearer realm="api"`,
+			expected: `WWW-Authenticate: Bearer realm="api"`,
+		},
+		{
+			name:     "bearer error challenge parameter chain is preserved",
+			input:    `Bearer error="invalid_token", error_description="The access token expired"`,
+			expected: `Bearer error="invalid_token", error_description="The access token expired"`,
+		},
+		{
+			name:     "bearer scope challenge parameter is preserved",
+			input:    `Bearer scope="read"`,
+			expected: `Bearer scope="read"`,
+		},
+		{
+			// Boundary doc: the token "Cookie" (6 chars, opaque-shaped) is
+			// indistinguishable from a real short credential, so we err on
+			// the side of redacting. The trailing literal word ("value")
+			// must NOT be eaten: ReplaceAllStringFunc only consumes the
+			// match itself, which ends after the captured non-whitespace
+			// run.
+			name:     "ambiguous bearer cookie literal is redacted but trailing word preserved",
+			input:    "Bearer Cookie value",
+			expected: "Bearer ***REDACTED*** value",
+		},
 	}
 
 	for _, tt := range tests {
