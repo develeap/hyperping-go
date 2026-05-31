@@ -76,8 +76,20 @@ type McpTransport struct {
 	token       []byte
 	maxRetries  int
 	initialized atomic.Bool
-	initMu      sync.Mutex
-	reqID       atomic.Int64
+	// initMu serializes writes to the (sessionID, initialized) pair so the
+	// publish step in initializeAttempt and the clear step in callToolOnce
+	// (404 case) cannot interleave. Held only across the two atomic stores;
+	// no network I/O happens under this mutex.
+	initMu sync.Mutex
+	// initInflightMu prevents an init stampede: only one Initialize call
+	// runs against the server at a time. Held across the full network
+	// round-trip in ensureInitialized via double-checked locking. Must NOT
+	// overlap with initMu acquisition order: ensureInitialized takes
+	// initInflightMu and indirectly initializeAttempt takes initMu, so the
+	// two mutexes are nested in that order. The 404-clear path takes ONLY
+	// initMu, so there is no inverse nesting and no deadlock.
+	initInflightMu sync.Mutex
+	reqID          atomic.Int64
 	// sessionID holds the Mcp-Session-Id captured from the initialize response,
 	// per MCP 2025-03-26 Streamable HTTP spec. nil means "no session"; the
 	// transport then omits the header entirely (servers that do not issue a
@@ -352,13 +364,45 @@ func (t *McpTransport) initializeAttempt(ctx context.Context, body []byte) (map[
 	// that do not enforce sessions. The Store ordering below is load-bearing
 	// for the case B race-window guard in callToolOnce; see the doc on this
 	// function.
+	//
+	// Both writes are performed under initMu (paired with the 404-clear
+	// path in callToolOnce which also takes initMu) so the (sessionID,
+	// initialized) pair cannot be interleaved with a clear. Without this,
+	// a concurrent clear could land between the two writes and leave the
+	// transport in a torn state (initialized=true, sessionID="").
+	t.initMu.Lock()
 	t.storeSessionID(resp.Header.Get("Mcp-Session-Id"))
 	t.initialized.Store(true)
+	t.initMu.Unlock()
 
 	if result, ok := rpcResp.Result.(map[string]any); ok {
 		return result, false, nil
 	}
 	return nil, false, nil
+}
+
+// ensureInitialized runs Initialize with stampede protection: only one
+// goroutine at a time may have an Initialize round-trip in flight against
+// the server. Other callers block on initInflightMu and short-circuit on
+// the second atomic check once the first caller finishes.
+//
+// initInflightMu is distinct from initMu. initMu protects the
+// (sessionID, initialized) publish step inside initializeAttempt and the
+// matching clear in callToolOnce's 404 path. Mixing the two would
+// deadlock: callToolOnce's clear path takes initMu, and if ensureInitialized
+// also held initMu across the network round-trip, a concurrent 404 clear
+// would block waiting for the in-flight Initialize.
+func (t *McpTransport) ensureInitialized(ctx context.Context) error {
+	if t.initialized.Load() {
+		return nil
+	}
+	t.initInflightMu.Lock()
+	defer t.initInflightMu.Unlock()
+	if t.initialized.Load() {
+		return nil
+	}
+	_, err := t.Initialize(ctx)
+	return err
 }
 
 // ==================== CallTool ====================
@@ -372,16 +416,16 @@ func (t *McpTransport) CallTool(ctx context.Context, toolName string, args map[s
 		// Init guard inside the loop so session-loss recovery (which clears
 		// t.initialized) re-fires Initialize on the next iteration. The
 		// fast-path atomic load keeps the common case lock-free.
+		//
+		// Serialization against concurrent callers (no init stampede) and
+		// pairing with the 404-clear path are owned by ensureInitialized
+		// and initializeAttempt themselves; we do NOT hold initMu across
+		// the Initialize call here, because initializeAttempt publishes
+		// the (sessionID, initialized) pair under initMu and re-entering
+		// would deadlock.
 		if !t.initialized.Load() {
-			t.initMu.Lock()
-			if !t.initialized.Load() {
-				_, initErr := t.Initialize(ctx)
-				t.initMu.Unlock()
-				if initErr != nil {
-					return nil, initErr
-				}
-			} else {
-				t.initMu.Unlock()
+			if err := t.ensureInitialized(ctx); err != nil {
+				return nil, err
 			}
 		}
 
