@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -804,4 +805,112 @@ func TestMCPTransport_SessionLossRecoveryFailsTwice(t *testing.T) {
 		"server saw %d initialize requests; want exactly 2 (one initial + one recovery)", initCount.Load())
 	require.Equal(t, int64(2), callCount.Load(),
 		"server saw %d tools/call requests; want exactly 2", callCount.Load())
+}
+
+// ==================== Phase 5: Audit Fixes ====================
+
+// Test (audit CRITICAL-1): MCP CallTool must cap response body to prevent OOM.
+//
+// A malicious or compromised MCP server (or a MITM at a proxy) could stream
+// arbitrarily many bytes of JSON to exhaust client memory. The REST path
+// already caps at maxResponseBodyBytes (10 MB) via readResponseBody; the MCP
+// path must reuse the same cap rather than handing resp.Body straight to
+// json.NewDecoder().
+//
+// The handler below streams ~50 MB of payload as a single large JSON string
+// inside a valid JSON-RPC envelope. CallTool must return an error within
+// bounded memory, NOT decode the full payload.
+func TestMCPTransport_CallTool_RejectsOversizedResponse(t *testing.T) {
+	const oversizeBytes = 50 * 1024 * 1024
+	// Server: respond to initialize normally; on tools/call, stream a huge JSON
+	// payload that is bigger than the cap.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := classifyRequest(t, r)
+		if method == "initialize" {
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+			return
+		}
+		// tools/call: write a JSON-RPC envelope whose result.content[0].text
+		// is a huge embedded JSON string. We do not need the inner text to be
+		// valid JSON for the test: the outer envelope decoder must abort
+		// before reaching that depth because the body exceeds the cap.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Write a valid JSON prefix then a long run of filler bytes inside a
+		// JSON string. We deliberately never close the JSON string so a
+		// no-cap decoder would keep reading until EOF / OOM.
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"`)
+		buf := make([]byte, 64*1024)
+		for i := range buf {
+			buf[i] = 'A'
+		}
+		written := 0
+		for written < oversizeBytes {
+			n, err := w.Write(buf)
+			if err != nil {
+				return
+			}
+			written += n
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL, WithMCPTimeout(30*time.Second))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	_, err = transport.CallTool(ctx, "get_status_summary", nil)
+	require.Error(t, err, "CallTool must reject an oversized response, not OOM")
+	require.True(t,
+		strings.Contains(err.Error(), "response") ||
+			strings.Contains(err.Error(), "too large") ||
+			strings.Contains(err.Error(), "exceeds"),
+		"error should mention oversized response; got %v", err)
+}
+
+// Test (audit CRITICAL-1, b): Initialize must also cap response body.
+func TestMCPTransport_Initialize_RejectsOversizedResponse(t *testing.T) {
+	const oversizeBytes = 50 * 1024 * 1024
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Open a JSON object and stream a long key string we never close.
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"k":"`)
+		buf := make([]byte, 64*1024)
+		for i := range buf {
+			buf[i] = 'A'
+		}
+		written := 0
+		for written < oversizeBytes {
+			n, err := w.Write(buf)
+			if err != nil {
+				return
+			}
+			written += n
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL, WithMCPTimeout(30*time.Second))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	_, err = transport.Initialize(ctx)
+	require.Error(t, err, "Initialize must reject an oversized response, not OOM")
+	require.True(t,
+		strings.Contains(err.Error(), "response") ||
+			strings.Contains(err.Error(), "too large") ||
+			strings.Contains(err.Error(), "exceeds"),
+		"error should mention oversized response; got %v", err)
 }
