@@ -616,3 +616,66 @@ func TestValidationDetail(t *testing.T) {
 		t.Errorf("Message = %q, expected 'URL must be a valid HTTP or HTTPS URL'", detail.Message)
 	}
 }
+
+func TestSanitizeMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "bearer authorization header",
+			input:    "request failed: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig",
+			expected: "request failed: Authorization: ***REDACTED***",
+		},
+		{
+			name:     "basic authorization header",
+			input:    "request failed: Authorization: Basic dXNlcjpwYXNzd29yZA==",
+			expected: "request failed: Authorization: ***REDACTED***",
+		},
+		{
+			name:     "lowercase authorization header still matches case-insensitive",
+			input:    "headers: authorization: Basic dXNlcjpwYXNzd29yZA==",
+			expected: "headers: Authorization: ***REDACTED***",
+		},
+		{
+			name:     "digest authorization header",
+			input:    `Authorization: Digest username="alice"`,
+			expected: "Authorization: ***REDACTED***",
+		},
+		{
+			name:     "authorization in comma-separated list keeps tail intact",
+			input:    "headers=[Authorization: Bearer abc123, Accept: application/json]",
+			expected: "headers=[Authorization: ***REDACTED***, Accept: application/json]",
+		},
+		{
+			name:     "bare bearer token outside authorization context",
+			input:    "curl -H Bearer ghp_1234567890abcdef done",
+			expected: "curl -H Bearer ***REDACTED*** done",
+		},
+		{
+			name:     "hyperping api key",
+			input:    "auth failed for sk_abc123def456",
+			expected: "auth failed for sk_***REDACTED***",
+		},
+		{
+			name:     "url credentials",
+			input:    "dial https://user:secret@db.example.com",
+			expected: "dial https://***REDACTED***@db.example.com",
+		},
+		{
+			name:     "no sensitive content unchanged",
+			input:    "monitor not found",
+			expected: "monitor not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeMessage(tt.input)
+			if got != tt.expected {
+				t.Errorf("sanitizeMessage(%q) = %q, expected %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}

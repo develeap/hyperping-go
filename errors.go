@@ -121,10 +121,12 @@ func NewRateLimitError(retryAfter int) *APIError {
 
 // Compile regexes once for performance.
 // bearerPattern matches any Bearer token of 8+ non-whitespace chars (VULN-019).
+// authHeaderPattern matches any Authorization header, regardless of scheme
+// (Bearer, Basic, Digest, etc.), so Basic auth credentials are redacted alongside Bearer tokens.
 var (
 	bearerPattern     = regexp.MustCompile(`Bearer\s+(?:[^\s]*[0-9_-][^\s]*|[^\s]{32,})`)
 	urlCredPattern    = regexp.MustCompile(`://[^:]+:[^@]+@`)
-	authHeaderPattern = regexp.MustCompile(`Authorization:\s+Bearer\s+[^\s]+`)
+	authHeaderPattern = regexp.MustCompile(`(?i)Authorization:\s+[^\r\n,]+`)
 )
 
 // sanitizeMessage removes sensitive information from error messages.
