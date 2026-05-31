@@ -5,11 +5,14 @@ package hyperping
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // mockRoundTripper is a mock implementation of http.RoundTripper for testing.
@@ -644,6 +647,71 @@ func TestEnforceTLS(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestEnforceTLS_DoesNotMutateCallerTransport (round-2 audit MEDIUM-4):
+// enforceTLS must not clobber a caller-supplied *http.Transport's
+// TLSClientConfig in place. Previously, the implementation reassigned
+// httpTransport.TLSClientConfig = defaultTLSConfig(), throwing away any
+// custom RootCAs / ServerName the caller had configured (and dragging the
+// caller's transport into our security profile by side effect, which is a
+// surprise even when the caller did NOT set TLSClientConfig).
+//
+// The fix is to Clone() the transport before mutating, then layer our
+// minimums on top of the caller's TLSClientConfig (which is itself cloned
+// or freshly created if nil). The caller's original *http.Transport must
+// be unchanged after enforceTLS returns.
+func TestEnforceTLS_DoesNotMutateCallerTransport(t *testing.T) {
+	callerTLS := &tls.Config{ServerName: "custom.example.com"}
+	caller := &http.Transport{TLSClientConfig: callerTLS}
+
+	result := enforceTLS(caller, "https://api.hyperping.io")
+
+	// The caller's transport must still hold its original TLSClientConfig,
+	// pointer-identical. enforceTLS must not have reassigned the field.
+	require.Same(t, callerTLS, caller.TLSClientConfig,
+		"enforceTLS must not replace the caller's TLSClientConfig")
+	require.Equal(t, "custom.example.com", caller.TLSClientConfig.ServerName,
+		"caller's ServerName must be preserved")
+	require.Equal(t, uint16(0), caller.TLSClientConfig.MinVersion,
+		"caller's MinVersion must NOT be silently raised; their config is theirs")
+
+	// The returned transport must be a CLONE: a different *http.Transport
+	// pointer, with our minimums applied AND the caller's ServerName
+	// preserved on the clone.
+	rwT, ok := result.(*http.Transport)
+	require.True(t, ok, "result must be a *http.Transport after HTTPS rewrap")
+	require.NotSame(t, caller, rwT, "result must be a clone, not the caller's transport")
+	require.NotNil(t, rwT.TLSClientConfig, "clone must have TLSClientConfig set")
+	require.GreaterOrEqual(t, rwT.TLSClientConfig.MinVersion, uint16(0x0303),
+		"clone must enforce TLS 1.2+ minimum")
+	require.Equal(t, "custom.example.com", rwT.TLSClientConfig.ServerName,
+		"clone must preserve the caller's ServerName")
+}
+
+// TestWithMCPHTTPClient_DoesNotMutateCallerTransport (round-2 audit MEDIUM-4):
+// the same guarantee at the MCP option boundary. A caller that constructs
+// an *http.Transport with a custom TLSClientConfig and feeds it through
+// WithMCPHTTPClient must observe their transport unchanged after the
+// constructor returns; the rewrap must operate on a clone.
+func TestWithMCPHTTPClient_DoesNotMutateCallerTransport(t *testing.T) {
+	callerTLS := &tls.Config{ServerName: "custom.example.com"}
+	callerTransport := &http.Transport{TLSClientConfig: callerTLS}
+	custom := &http.Client{Transport: callerTransport}
+
+	_, err := NewMcpTransport(
+		"test-key",
+		"https://api.hyperping.io/v1/mcp",
+		WithMCPHTTPClient(custom),
+	)
+	require.NoError(t, err)
+
+	require.Same(t, callerTLS, callerTransport.TLSClientConfig,
+		"caller's TLSClientConfig pointer must be unchanged after the option runs")
+	require.Equal(t, "custom.example.com", callerTransport.TLSClientConfig.ServerName,
+		"caller's ServerName must be preserved")
+	require.Equal(t, uint16(0), callerTransport.TLSClientConfig.MinVersion,
+		"caller's MinVersion must NOT be silently raised")
 }
 
 // TestEnforceTLS_CustomTransport tests enforceTLS with non-standard transport.
