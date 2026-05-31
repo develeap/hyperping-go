@@ -136,7 +136,14 @@ func NewRateLimitError(retryAfter int) *APIError {
 // This set is not exhaustive; any header not listed here should be treated
 // as potentially sensitive until proven otherwise.
 var (
-	bearerPattern          = regexp.MustCompile(`Bearer\s+(?:[^\s]*[0-9_-][^\s]*|[^\s]{32,})`)
+	// bearerPattern matches any "Bearer <token>" sequence where the token is
+	// 6 or more non-whitespace characters. The original variant required a
+	// digit/underscore/dash anywhere in the token OR a 32+ char run, which
+	// left letters-only tokens of 8-31 chars (real-world: opaque session
+	// ids, first segment of an unsigned JWT) unredacted. 6 is the floor for
+	// any plausible production credential; shorter sequences are treated as
+	// placeholders / examples and pass through.
+	bearerPattern          = regexp.MustCompile(`Bearer\s+\S{6,}`)
 	urlCredPattern         = regexp.MustCompile(`://[^:]+:[^@]+@`)
 	proxyAuthHeaderPattern = regexp.MustCompile(`(?i)Proxy-Authorization:\s+[^\r\n]+`)
 	cookieHeaderPattern    = regexp.MustCompile(`(?i)(?:Set-)?Cookie:\s+[^\r\n]+`)
