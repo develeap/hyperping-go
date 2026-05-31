@@ -1053,6 +1053,38 @@ func TestMCPTransport_ConcurrentInitialize_ConsistentFinalState(t *testing.T) {
 		"after concurrent Initialize with initialized=true, sessionID must be non-empty")
 }
 
+// Test (audit MEDIUM-6): MCP handleHTTPError must clamp the Retry-After
+// value to the same upper bound the REST path applies (maxRetryAfterSeconds
+// = 600s). A malicious or misbehaving server could otherwise return
+// Retry-After: 86400 and direct any future caller respecting RetryAfter
+// to sleep for 24 hours.
+func TestMCPTransport_RateLimit_RetryAfterClamped(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := classifyRequest(t, r)
+		if method == "initialize" {
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+			return
+		}
+		w.Header().Set("Retry-After", "99999")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	// maxRetries=0 so the first 429 is the only response we see.
+	transport, err := NewMcpTransport("test-key", server.URL, WithMCPMaxRetries(0))
+	require.NoError(t, err)
+
+	_, err = transport.CallTool(context.Background(), "get_status_summary", nil)
+	require.Error(t, err)
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr, "expected *APIError, got %T: %v", err, err)
+	require.Equal(t, 429, apiErr.StatusCode)
+	require.LessOrEqual(t, apiErr.RetryAfter, 600,
+		"Retry-After must be clamped to maxRetryAfterSeconds (600); got %d", apiErr.RetryAfter)
+	require.Greater(t, apiErr.RetryAfter, 0,
+		"clamped Retry-After must remain positive when the header was a positive integer")
+}
+
 // Test (audit CRITICAL-1, b): Initialize must also cap response body.
 func TestMCPTransport_Initialize_RejectsOversizedResponse(t *testing.T) {
 	const oversizeBytes = 50 * 1024 * 1024
