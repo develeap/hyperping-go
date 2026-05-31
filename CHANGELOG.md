@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-31
+
+### Security
+
+- `sanitizeMessage` (the redactor invoked by `APIError.Error()`) now covers credential-bearing headers beyond Bearer. `Authorization:` is redacted for Bearer, Basic, Digest, AWS SigV4, and any custom scheme; the terminator was widened from "stop at comma" to "stop at line break" so multi-field schemes (e.g. Digest `response="<hash>"`, SigV4 `Signature=...`) no longer leak the credential past the first comma. Added explicit patterns for `Cookie`, `Set-Cookie`, `Proxy-Authorization`, `X-Api-Key`, `X-Auth-Token`, and `X-Access-Token`. Tradeoff: a single log line packing multiple headers separated by commas is over-redacted (only the first matching header survives), which is the intended bias for a security primitive.
+
+### Notes
+
+- Backward compatible. Callers that pattern-match on the previous `Authorization: Bearer <token>` redacted form should check for the broader `Authorization: ***REDACTED***` shape, which now applies regardless of scheme.
+
+## [0.6.0] - 2026-05-24
+
 ### Added
 
 - `ListOutages` now accepts functional options. `WithStatus("all"|"ongoing"|"resolved")` adds the corresponding `status` query parameter so callers can let the Hyperping API filter outages server-side instead of paginating through the full history. The no-option call is unchanged and omits the parameter entirely.
