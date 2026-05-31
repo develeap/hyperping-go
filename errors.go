@@ -136,12 +136,31 @@ func NewRateLimitError(retryAfter int) *APIError {
 // This set is not exhaustive; any header not listed here should be treated
 // as potentially sensitive until proven otherwise.
 var (
-	bearerPattern          = regexp.MustCompile(`Bearer\s+(?:[^\s]*[0-9_-][^\s]*|[^\s]{32,})`)
-	urlCredPattern         = regexp.MustCompile(`://[^:]+:[^@]+@`)
-	proxyAuthHeaderPattern = regexp.MustCompile(`(?i)Proxy-Authorization:\s+[^\r\n]+`)
-	cookieHeaderPattern    = regexp.MustCompile(`(?i)(?:Set-)?Cookie:\s+[^\r\n]+`)
-	apiKeyHeaderPattern    = regexp.MustCompile(`(?i)X-(?:Api-Key|Auth-Token|Access-Token):\s+[^\r\n]+`)
-	authHeaderPattern      = regexp.MustCompile(`(?i)Authorization:\s+[^\r\n]+`)
+	// bearerPattern matches any "Bearer <token>" sequence where the token is
+	// 6 or more non-whitespace characters. The original variant required a
+	// digit/underscore/dash anywhere in the token OR a 32+ char run, which
+	// left letters-only tokens of 8-31 chars (real-world: opaque session
+	// ids, first segment of an unsigned JWT) unredacted. 6 is the floor for
+	// any plausible production credential; shorter sequences are treated as
+	// placeholders / examples and pass through.
+	// bearerPattern captures the post-Bearer token in group 1 so a
+	// ReplaceAllStringFunc callback can decide whether to redact. Without
+	// the capture group, the prior `Bearer\s+\S{6,}` matched
+	// RFC 6750 WWW-Authenticate challenge parameters (`Bearer realm="api"`,
+	// `Bearer error="invalid_token"`) and clobbered legitimate diagnostic
+	// output. RE2 has no lookahead, so the discriminator runs in the
+	// callback (see sanitizeMessage).
+	bearerPattern = regexp.MustCompile(`Bearer\s+(\S{6,})`)
+	// bearerChallengeParamPattern enumerates the RFC 6750 section 3
+	// challenge-parameter names. If the captured group starts with one of
+	// these followed by '=', the match is a challenge parameter, not a
+	// credential, and is left intact.
+	bearerChallengeParamPattern = regexp.MustCompile(`^(?:realm|scope|error|error_description|error_uri)=`)
+	urlCredPattern              = regexp.MustCompile(`://[^:]+:[^@]+@`)
+	proxyAuthHeaderPattern      = regexp.MustCompile(`(?i)Proxy-Authorization:\s+[^\r\n]+`)
+	cookieHeaderPattern         = regexp.MustCompile(`(?i)(?:Set-)?Cookie:\s+[^\r\n]+`)
+	apiKeyHeaderPattern         = regexp.MustCompile(`(?i)X-(?:Api-Key|Auth-Token|Access-Token):\s+[^\r\n]+`)
+	authHeaderPattern           = regexp.MustCompile(`(?i)Authorization:\s+[^\r\n]+`)
 )
 
 // sanitizeMessage removes sensitive information from error messages.
@@ -173,8 +192,19 @@ func sanitizeMessage(msg string) string {
 	})
 	msg = authHeaderPattern.ReplaceAllString(msg, "Authorization: ***REDACTED***")
 
-	// Replace Bearer tokens
-	msg = bearerPattern.ReplaceAllString(msg, "Bearer ***REDACTED***")
+	// Replace Bearer tokens, but preserve RFC 6750 challenge parameters
+	// (realm/scope/error/...). The capture group holds the post-Bearer
+	// run of non-whitespace; if it starts with a known challenge prefix
+	// the match is returned unchanged. Short opaque tokens that happen to
+	// collide with a challenge name (e.g. literal "Cookie", "value") are
+	// still redacted because they do not match the param= prefix.
+	msg = bearerPattern.ReplaceAllStringFunc(msg, func(match string) string {
+		sub := bearerPattern.FindStringSubmatch(match)
+		if len(sub) >= 2 && bearerChallengeParamPattern.MatchString(sub[1]) {
+			return match
+		}
+		return "Bearer ***REDACTED***"
+	})
 
 	// Replace credentials in URLs (https://user:pass@domain.com)
 	msg = urlCredPattern.ReplaceAllString(msg, "://***REDACTED***@")

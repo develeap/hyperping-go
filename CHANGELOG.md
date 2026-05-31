@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-31
+
+### Security
+
+- MCP transport now caps decoded response bodies at `maxResponseBodyBytes` (10 MB, matching the REST path). `decodeJSONRPCResponse` performs a two-stage check: a `Content-Length` pre-flight that rejects oversize payloads without reading any body bytes, plus a post-read length check for chunked / unknown-length servers. A malicious or compromised MCP server can no longer stream multi-gigabyte JSON through the decoder and exhaust client memory.
+- `WithMCPHTTPClient` now re-wraps the caller's transport through the auth + TLS chain after options run. Without the rewrap a caller's default `*http.Client` would lose `defaultTLSConfig` (TLS 1.2+ floor and AEAD cipher restrictions) and the `authTransport` wrapper, opening a downgrade-to-cleartext path that could leak the manually-attached Bearer token.
+- `sanitizeMessage` Bearer redaction now preserves RFC 6750 challenge parameters. Previously `Bearer realm="api"`, `Bearer error="invalid_token"`, and `Bearer scope="read"` were all over-redacted to `Bearer ***REDACTED***`, hiding legitimate `WWW-Authenticate` diagnostics. The matcher now captures the post-Bearer token via `ReplaceAllStringFunc` and short-circuits when the token starts with `realm=`, `scope=`, `error=`, `error_description=`, or `error_uri=`. Ambiguous short opaque tokens (e.g. literal "Cookie") remain redacted by design.
+- Bearer redaction floor stays at 6 non-whitespace characters so letters-only session ids and short opaque tokens still redact. Five-character placeholders pass through unchanged for documentation / example use.
+- MCP `Retry-After` parsing now routes through `parseRetryAfter`, which clamps the returned wait at `maxRetryAfterSeconds`. A hostile server can no longer return `Retry-After: 86400` and force a 24-hour wait on callers that respect the value.
+- `WithBaseURL` and `NewMcpTransport` reject base URLs that embed userinfo (`https://user:pass@host`). Embedded userinfo previously bypassed the Bearer auth contract: the URL credential would be sent in addition to the API key, possibly to the wrong tenant.
+- `initializeAttempt` publishes the `(sessionID, initialized)` pair under `initMu` so the 404-clear path in `callToolOnce` cannot interleave between the two writes and leave the transport in a torn state.
+- `enforceTLS` now clones the caller-supplied `*http.Transport` before applying TLS minimums, instead of overwriting the caller's `TLSClientConfig` in place. Custom `RootCAs`, `ServerName`, and client-cert configuration on the caller's transport are preserved on the clone; the original is untouched.
+
+### Changed
+
+- `Initialize` (public method on `*McpTransport`) now runs under the same stampede guard as `ensureInitialized`. Concurrent direct callers see exactly one initialize handshake hit the server; the remaining callers short-circuit on the published `initialized` flag. No public API change, but worker pools that previously pre-initialized in parallel will now observe a single server-side handshake.
+- `WithBaseURL` (REST) and `NewMcpTransport` (MCP) reject base URLs containing userinfo. Callers that relied on `https://user@host` must move credentials into headers (the Bearer API key path is the intended channel). Breaking for any caller that used embedded userinfo.
+- `WithMCPHTTPClient` rewraps the caller's `*http.Transport` through `buildTransportChain` after options run. Callers that supplied a custom `*http.Transport` hoping to disable our TLS minimums or auth injection will observe their transport wrapped, not bypassed. The caller's original `*http.Transport` is not mutated; the rewrap operates on a clone (silent override of caller-supplied behavior, by design).
+- Initialize publish step (`sessionID` + `initialized`) is atomic against the 404-clear path.
+
+### Notes
+
+- Two stdlib vulnerabilities surfaced by `govulncheck` remain unpatched in `go.mod`: GO-2026-4971 (net dial NUL-byte panic on Windows) and GO-2026-4918 (HTTP/2 SETTINGS_MAX_FRAME_SIZE infinite loop). Both fix in Go 1.26.3; a toolchain bump is tracked separately.
+
 ## [0.6.1] - 2026-05-31
 
 ### Security

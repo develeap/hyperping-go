@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -804,4 +805,466 @@ func TestMCPTransport_SessionLossRecoveryFailsTwice(t *testing.T) {
 		"server saw %d initialize requests; want exactly 2 (one initial + one recovery)", initCount.Load())
 	require.Equal(t, int64(2), callCount.Load(),
 		"server saw %d tools/call requests; want exactly 2", callCount.Load())
+}
+
+// ==================== Phase 5: Audit Fixes ====================
+
+// Test (audit CRITICAL-1): MCP CallTool must cap response body to prevent OOM.
+//
+// A malicious or compromised MCP server (or a MITM at a proxy) could stream
+// arbitrarily many bytes of JSON to exhaust client memory. The REST path
+// already caps at maxResponseBodyBytes (10 MB) via readResponseBody; the MCP
+// path must reuse the same cap rather than handing resp.Body straight to
+// json.NewDecoder().
+//
+// The handler below streams ~50 MB of payload as a single large JSON string
+// inside a valid JSON-RPC envelope. CallTool must return an error within
+// bounded memory, NOT decode the full payload.
+func TestMCPTransport_CallTool_RejectsOversizedResponse(t *testing.T) {
+	const oversizeBytes = 50 * 1024 * 1024
+	// Server: respond to initialize normally; on tools/call, stream a huge JSON
+	// payload that is bigger than the cap.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := classifyRequest(t, r)
+		if method == "initialize" {
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+			return
+		}
+		// tools/call: write a JSON-RPC envelope whose result.content[0].text
+		// is a huge embedded JSON string. We do not need the inner text to be
+		// valid JSON for the test: the outer envelope decoder must abort
+		// before reaching that depth because the body exceeds the cap.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Write a valid JSON prefix then a long run of filler bytes inside a
+		// JSON string. We deliberately never close the JSON string so a
+		// no-cap decoder would keep reading until EOF / OOM.
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"`)
+		buf := make([]byte, 64*1024)
+		for i := range buf {
+			buf[i] = 'A'
+		}
+		written := 0
+		for written < oversizeBytes {
+			n, err := w.Write(buf)
+			if err != nil {
+				return
+			}
+			written += n
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL, WithMCPTimeout(30*time.Second))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	_, err = transport.CallTool(ctx, "get_status_summary", nil)
+	require.Error(t, err, "CallTool must reject an oversized response, not OOM")
+	require.True(t,
+		strings.Contains(err.Error(), "response") ||
+			strings.Contains(err.Error(), "too large") ||
+			strings.Contains(err.Error(), "exceeds"),
+		"error should mention oversized response; got %v", err)
+}
+
+// Test (round-2 audit HIGH-2): the OOM cap must be enforced via a
+// Content-Length pre-flight, not by streaming bytes through the decoder and
+// hoping the size check fires before memory pressure. The previous test
+// only proved that an over-sized stream eventually surfaces an error; it
+// did NOT prove that memory was bounded, because httptest can also
+// close the connection mid-stream and surface an io.ErrUnexpectedEOF that
+// looks like a successful "guard fired" assertion.
+//
+// This test wires a custom RoundTripper that returns a fake *http.Response
+// with Content-Length set to 999_999_999 and a counting body. With the
+// fix in place, decodeJSONRPCResponse must inspect resp.ContentLength,
+// return the sentinel oversized error without reading any bytes, and the
+// counter must remain at zero.
+func TestMCPTransport_CallTool_RejectsOversizedContentLength_NoBodyRead(t *testing.T) {
+	// readCounter wraps an io.Reader to count bytes that the SUT actually
+	// pulls from the body. With the Content-Length pre-flight in place the
+	// count must stay at 0 because the SUT short-circuits before touching
+	// resp.Body.
+	type readCounter struct {
+		inner io.Reader
+		n     *atomic.Int64
+	}
+	read := func(rc *readCounter, p []byte) (int, error) {
+		n, err := rc.inner.Read(p)
+		rc.n.Add(int64(n))
+		return n, err
+	}
+
+	var bodyBytesRead atomic.Int64
+	// fakeRT serves a normal initialize first (so ensureInitialized succeeds)
+	// and an oversized-Content-Length response for tools/call.
+	type fakeRT struct {
+		t        *testing.T
+		callSeen atomic.Int32
+	}
+	rt := &fakeRT{t: t}
+	roundTrip := func(req *http.Request) (*http.Response, error) {
+		bodyBytes, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		var rpc JSONRPCRequest
+		require.NoError(t, json.Unmarshal(bodyBytes, &rpc))
+		if rpc.Method == "initialize" {
+			rt.callSeen.Add(1)
+			buf, err := json.Marshal(mockInitializeResponse)
+			require.NoError(t, err)
+			return &http.Response{
+				StatusCode:    200,
+				Header:        http.Header{"Content-Type": []string{"application/json"}},
+				Body:          io.NopCloser(strings.NewReader(string(buf))),
+				ContentLength: int64(len(buf)),
+				Request:       req,
+			}, nil
+		}
+		// tools/call: report a huge Content-Length but ship a small body.
+		// The SUT must trust the Content-Length advertisement and refuse
+		// to read.
+		bodyText := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"tiny"}]}}`
+		rc := &readCounter{inner: strings.NewReader(bodyText), n: &bodyBytesRead}
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(readerFunc(func(p []byte) (int, error) {
+				return read(rc, p)
+			})),
+			ContentLength: 999_999_999,
+			Request:       req,
+		}, nil
+	}
+
+	custom := &http.Client{Transport: roundTripFunc(roundTrip)}
+	transport, err := NewMcpTransport(
+		"test-key",
+		"https://api.hyperping.io/v1/mcp",
+		WithMCPHTTPClient(custom),
+	)
+	require.NoError(t, err)
+
+	_, err = transport.CallTool(context.Background(), "get_status_summary", nil)
+	require.Error(t, err, "oversized Content-Length must produce an error")
+	require.True(t,
+		strings.Contains(err.Error(), "exceeds") ||
+			strings.Contains(err.Error(), "too large"),
+		"error should mention size; got %v", err)
+	require.Equal(t, int64(0), bodyBytesRead.Load(),
+		"body must not be read when Content-Length already exceeds the cap; read %d bytes",
+		bodyBytesRead.Load())
+}
+
+// roundTripFunc adapts a function value to http.RoundTripper for the
+// Content-Length pre-flight test.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// readerFunc adapts a function value to io.Reader for the same purpose.
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+
+// Test (audit CRITICAL-2): WithMCPHTTPClient must not bypass the TLS
+// enforcement + auth-transport chain.
+//
+// A user passing a custom *http.Client (e.g. for metrics or proxy support)
+// would previously have its default transport substituted in wholesale,
+// dropping defaultTLSConfig (TLS 1.2+ floor and AEAD cipher suites) AND
+// dropping the authTransport that injects the Bearer header. The Bearer
+// is still manually set on the request in initializeAttempt/callToolOnce,
+// so the practical risk is that a downgrade-to-cleartext attack ships the
+// token over plain HTTP.
+//
+// We assert one of two contracts:
+//   - the constructor errors, OR
+//   - after the option runs, the http.Client.Transport is wrapped through
+//     buildTransportChain so the top-level RoundTripper is *authTransport
+//     and the inner layer enforces TLS for HTTPS URLs.
+func TestNewMcpTransport_CustomHTTPClient_PreservesTLSAndAuthChain(t *testing.T) {
+	custom := &http.Client{Transport: &http.Transport{}}
+	transport, err := NewMcpTransport(
+		"test-key",
+		"https://api.hyperping.io/v1/mcp",
+		WithMCPHTTPClient(custom),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, transport)
+
+	// The transport's http.Client must have its Transport re-wrapped so the
+	// top layer is the auth/transport chain, not the bare *http.Transport
+	// the caller supplied. Without the fix, transport.client.Transport ==
+	// custom.Transport (a plain *http.Transport) and both checks fail.
+	rt := transport.client.Transport
+	require.NotNil(t, rt, "client transport must not be nil")
+	authT, ok := rt.(*authTransport)
+	require.True(t, ok,
+		"expected top-level transport to be *authTransport after WithMCPHTTPClient, got %T", rt)
+	require.Equal(t, []byte("test-key"), authT.token, "auth token must propagate")
+
+	// For an HTTPS base URL on a non-localhost host, the inner transport
+	// must be the standard *http.Transport with our defaultTLSConfig applied
+	// (TLS 1.2 minimum, restricted cipher suites). For custom non-*http.Transport
+	// inners, it would be wrapped in *tlsEnforcedTransport. Either path is
+	// acceptable; both prove the chain was rebuilt.
+	switch inner := authT.next.(type) {
+	case *http.Transport:
+		require.NotNil(t, inner.TLSClientConfig,
+			"HTTPS transport must have TLSClientConfig set after option re-wrap")
+		require.Equal(t, uint16(0x0303), inner.TLSClientConfig.MinVersion,
+			"TLSClientConfig.MinVersion must be TLS 1.2")
+	case *tlsEnforcedTransport:
+		// acceptable
+	default:
+		t.Fatalf("expected inner transport to be *http.Transport with TLS config or *tlsEnforcedTransport, got %T", inner)
+	}
+}
+
+// Test (audit CRITICAL-2, b): WithMCPHTTPClient with a non-*http.Transport
+// custom RoundTripper must result in either an error from the constructor
+// OR a chain that blocks cleartext HTTP for non-localhost URLs.
+func TestNewMcpTransport_CustomHTTPClient_BlocksCleartextHTTP(t *testing.T) {
+	// A mockRoundTripper records the request; we then attempt an HTTP probe.
+	mockRT := &mockRoundTripper{
+		response: &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(""))},
+	}
+	custom := &http.Client{Transport: mockRT}
+
+	// HTTPS base URL so the constructor doesn't reject up front.
+	transport, err := NewMcpTransport(
+		"test-key",
+		"https://api.hyperping.io/v1/mcp",
+		WithMCPHTTPClient(custom),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, transport)
+
+	// Now issue a probe HTTP request through the resulting client. If the
+	// transport chain was correctly re-wrapped, this should be blocked at
+	// the tlsEnforcedTransport layer.
+	req, err := http.NewRequest(http.MethodGet, "http://api.hyperping.io/probe", nil)
+	require.NoError(t, err)
+	_, err = transport.client.Do(req)
+	require.Error(t, err,
+		"cleartext HTTP probe should be blocked by tlsEnforcedTransport after re-wrap")
+	require.True(t,
+		strings.Contains(err.Error(), "HTTPS required") ||
+			strings.Contains(err.Error(), "tlsEnforcedTransport"),
+		"error should come from the TLS enforcement layer; got %v", err)
+}
+
+// Test (round-2 audit MEDIUM-5): a direct Initialize call must honor the
+// init stampede guard. Previously only ensureInitialized (the lazy path
+// from CallTool) ran under initInflightMu; calling Initialize directly
+// from N goroutines hit the server N times. The fix routes Initialize
+// through the same double-checked locking so a worker pool that
+// pre-initializes does not stampede the server with parallel handshakes.
+func TestMCPTransport_Initialize_ConcurrentCallersHitServerOnce(t *testing.T) {
+	var initCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Slow handler so concurrent callers pile up under the guard.
+		initCount.Add(1)
+		time.Sleep(150 * time.Millisecond)
+		w.Header().Set("Mcp-Session-Id", "sess-stampede")
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	const N = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, N)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, e := transport.Initialize(context.Background())
+			errs <- e
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		require.NoError(t, e)
+	}
+
+	got := initCount.Load()
+	require.Equalf(t, int64(1), got,
+		"concurrent Initialize callers triggered %d server-side handshakes; want exactly 1 (stampede guard must cover direct Initialize, not just ensureInitialized)",
+		got)
+}
+
+// Test (audit HIGH-3): initializeAttempt must hold initMu while writing
+// the (sessionID, initialized) pair, so the 404-clear path cannot interleave
+// between those two writes and produce a torn state.
+//
+// Direct structural assertion: hold initMu in the test goroutine, then
+// kick off Initialize concurrently. With the fix, initializeAttempt blocks
+// on initMu before publishing either write, so until the test releases the
+// mutex, the transport state stays clean. Without the fix, initializeAttempt
+// publishes both writes immediately and the test goroutine sees the published
+// state while still holding the mutex (proving the writes happen outside the
+// critical section).
+func TestMCPTransport_InitializeAttempt_WritesUnderInitMu(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Mcp-Session-Id", "sess-test")
+		require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	// Take initMu in the test goroutine. With the fix, any concurrent
+	// Initialize must block on this mutex before publishing the sessionID
+	// and initialized writes. Without the fix, Initialize completes both
+	// writes regardless.
+	transport.initMu.Lock()
+
+	done := make(chan error, 1)
+	go func() {
+		_, e := transport.Initialize(context.Background())
+		done <- e
+	}()
+
+	// Give the background goroutine time to run its HTTP request and reach
+	// the write step. With the fix, it will block on initMu. Without the
+	// fix, it will complete the writes.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if transport.initialized.Load() || transport.loadSessionID() != "" {
+			// State was published while we still hold initMu.
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	gotInit := transport.initialized.Load()
+	gotSID := transport.loadSessionID()
+
+	// Release the mutex so the background Initialize can finish.
+	transport.initMu.Unlock()
+	require.NoError(t, <-done)
+
+	require.Falsef(t, gotInit,
+		"initialized was published while initMu was held by another goroutine; write happened outside the critical section")
+	require.Emptyf(t, gotSID,
+		"sessionID was published while initMu was held by another goroutine; got %q", gotSID)
+}
+
+// Test (audit HIGH-3, b): concurrent Initialize calls do not deadlock and
+// always leave the transport in a consistent (initialized=true, sessionID!="")
+// state. Runs with -race to also catch any data race in the publish step.
+func TestMCPTransport_ConcurrentInitialize_ConsistentFinalState(t *testing.T) {
+	var seq atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := seq.Add(1)
+		time.Sleep(5 * time.Millisecond)
+		w.Header().Set("Mcp-Session-Id", fmt.Sprintf("sess-%d", n))
+		require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+
+	const N = 16
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = transport.Initialize(context.Background())
+		}()
+	}
+	wg.Wait()
+
+	require.True(t, transport.initialized.Load(),
+		"after concurrent Initialize, transport.initialized must be true")
+	require.NotEmpty(t, transport.loadSessionID(),
+		"after concurrent Initialize with initialized=true, sessionID must be non-empty")
+}
+
+// Test (audit MEDIUM-6): MCP handleHTTPError must clamp the Retry-After
+// value to the same upper bound the REST path applies (maxRetryAfterSeconds
+// = 600s). A malicious or misbehaving server could otherwise return
+// Retry-After: 86400 and direct any future caller respecting RetryAfter
+// to sleep for 24 hours.
+func TestMCPTransport_RateLimit_RetryAfterClamped(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := classifyRequest(t, r)
+		if method == "initialize" {
+			require.NoError(t, json.NewEncoder(w).Encode(mockInitializeResponse))
+			return
+		}
+		w.Header().Set("Retry-After", "99999")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	// maxRetries=0 so the first 429 is the only response we see.
+	transport, err := NewMcpTransport("test-key", server.URL, WithMCPMaxRetries(0))
+	require.NoError(t, err)
+
+	_, err = transport.CallTool(context.Background(), "get_status_summary", nil)
+	require.Error(t, err)
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr, "expected *APIError, got %T: %v", err, err)
+	require.Equal(t, 429, apiErr.StatusCode)
+	require.LessOrEqual(t, apiErr.RetryAfter, 600,
+		"Retry-After must be clamped to maxRetryAfterSeconds (600); got %d", apiErr.RetryAfter)
+	require.Greater(t, apiErr.RetryAfter, 0,
+		"clamped Retry-After must remain positive when the header was a positive integer")
+}
+
+// Test (audit CRITICAL-1, b): Initialize must also cap response body.
+func TestMCPTransport_Initialize_RejectsOversizedResponse(t *testing.T) {
+	const oversizeBytes = 50 * 1024 * 1024
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Open a JSON object and stream a long key string we never close.
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"k":"`)
+		buf := make([]byte, 64*1024)
+		for i := range buf {
+			buf[i] = 'A'
+		}
+		written := 0
+		for written < oversizeBytes {
+			n, err := w.Write(buf)
+			if err != nil {
+				return
+			}
+			written += n
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL, WithMCPTimeout(30*time.Second))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	_, err = transport.Initialize(ctx)
+	require.Error(t, err, "Initialize must reject an oversized response, not OOM")
+	require.True(t,
+		strings.Contains(err.Error(), "response") ||
+			strings.Contains(err.Error(), "too large") ||
+			strings.Contains(err.Error(), "exceeds"),
+		"error should mention oversized response; got %v", err)
 }

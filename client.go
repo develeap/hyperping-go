@@ -207,11 +207,18 @@ func WithBaseURL(baseURL string) Option {
 
 // validateBaseURL rejects URLs that are neither HTTPS nor localhost-only to
 // prevent SSRF attacks where user-supplied input redirects API calls to
-// internal services.
+// internal services. URLs that embed userinfo (user[:password]@host) are
+// also rejected: the credentials would be re-emitted on every outbound
+// request and could leak through transport-error text (audit MEDIUM-5).
 func validateBaseURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("invalid base URL %q: %w", rawURL, err)
+	}
+	if u.User != nil {
+		// Do not echo the URL back, even sanitized -- url.Parse keeps the
+		// password and any String() rendering may surface it.
+		return fmt.Errorf("base URL must not contain userinfo / embedded credentials")
 	}
 	if u.Scheme == "https" {
 		return nil

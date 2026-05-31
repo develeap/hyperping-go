@@ -726,6 +726,38 @@ func TestSanitizeMessage(t *testing.T) {
 			expected: "curl -H Bearer ***REDACTED*** done",
 		},
 		{
+			// Audit HIGH-4: letters-only token between 8 and 31 chars
+			// bypasses the original regex, which required a digit/underscore/
+			// dash OR 32+ chars. A real-world example is a session id stored
+			// as the first segment of a JWT.
+			name:     "bare bearer letter-only token 11 chars is redacted",
+			input:    "trace Bearer XYZABCDEFGH end",
+			expected: "trace Bearer ***REDACTED*** end",
+		},
+		{
+			// Audit HIGH-4: a hex-only Bearer token of 10 chars (no digits,
+			// no dash, no underscore would historically slip; even with
+			// digits the original regex would catch this case but it serves
+			// as a regression anchor for the broader replacement pattern).
+			name:     "bare bearer hex token 10 chars is redacted",
+			input:    "trace Bearer abcdef1234 end",
+			expected: "trace Bearer ***REDACTED*** end",
+		},
+		{
+			// Audit HIGH-4: minimum-length 6-char Bearer token must redact
+			// to avoid leaking short session ids.
+			name:     "bare bearer 6-char token is redacted",
+			input:    "trace Bearer abcdef end",
+			expected: "trace Bearer ***REDACTED*** end",
+		},
+		{
+			// Boundary: 5 chars should NOT redact (too short to be a
+			// meaningful credential, and may be a placeholder in docs).
+			name:     "bare bearer 5-char token is NOT redacted",
+			input:    "trace Bearer abcde end",
+			expected: "trace Bearer abcde end",
+		},
+		{
 			name:     "hyperping api key",
 			input:    "auth failed for sk_abc123def456",
 			expected: "auth failed for sk_***REDACTED***",
@@ -739,6 +771,39 @@ func TestSanitizeMessage(t *testing.T) {
 			name:     "no sensitive content unchanged",
 			input:    "monitor not found",
 			expected: "monitor not found",
+		},
+		// Round-2 audit HIGH-1: RFC 6750 challenge parameters must NOT be
+		// treated as Bearer credentials. The original regex captured any
+		// `Bearer \S{6,}` and clobbered the realm / error / scope diagnostic
+		// info that the server returns in WWW-Authenticate. The fix narrows
+		// the redaction to "Bearer followed by an opaque token", i.e. a
+		// captured group that does NOT start with one of the well-known
+		// challenge-parameter prefixes (realm=, scope=, error=, etc.).
+		{
+			name:     "bearer realm challenge parameter is preserved",
+			input:    `WWW-Authenticate: Bearer realm="api"`,
+			expected: `WWW-Authenticate: Bearer realm="api"`,
+		},
+		{
+			name:     "bearer error challenge parameter chain is preserved",
+			input:    `Bearer error="invalid_token", error_description="The access token expired"`,
+			expected: `Bearer error="invalid_token", error_description="The access token expired"`,
+		},
+		{
+			name:     "bearer scope challenge parameter is preserved",
+			input:    `Bearer scope="read"`,
+			expected: `Bearer scope="read"`,
+		},
+		{
+			// Boundary doc: the token "Cookie" (6 chars, opaque-shaped) is
+			// indistinguishable from a real short credential, so we err on
+			// the side of redacting. The trailing literal word ("value")
+			// must NOT be eaten: ReplaceAllStringFunc only consumes the
+			// match itself, which ends after the captured non-whitespace
+			// run.
+			name:     "ambiguous bearer cookie literal is redacted but trailing word preserved",
+			input:    "Bearer Cookie value",
+			expected: "Bearer ***REDACTED*** value",
 		},
 	}
 

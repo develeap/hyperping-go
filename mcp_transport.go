@@ -30,7 +30,7 @@ const (
 	// together. Keeping this as a const rather than a `WithVersion()` option
 	// is deliberate: server-side telemetry should observe the actual SDK
 	// version, not a value chosen by the consumer.
-	sdkVersion = "0.5.0"
+	sdkVersion = "0.6.2"
 	// mcpAcceptHeader is required by MCP 2025-03-26 Streamable HTTP: the
 	// server may respond with either application/json or text/event-stream
 	// at its discretion, so clients must accept both even if they only
@@ -76,8 +76,20 @@ type McpTransport struct {
 	token       []byte
 	maxRetries  int
 	initialized atomic.Bool
-	initMu      sync.Mutex
-	reqID       atomic.Int64
+	// initMu serializes writes to the (sessionID, initialized) pair so the
+	// publish step in initializeAttempt and the clear step in callToolOnce
+	// (404 case) cannot interleave. Held only across the two atomic stores;
+	// no network I/O happens under this mutex.
+	initMu sync.Mutex
+	// initInflightMu prevents an init stampede: only one Initialize call
+	// runs against the server at a time. Held across the full network
+	// round-trip in ensureInitialized via double-checked locking. Must NOT
+	// overlap with initMu acquisition order: ensureInitialized takes
+	// initInflightMu and indirectly initializeAttempt takes initMu, so the
+	// two mutexes are nested in that order. The 404-clear path takes ONLY
+	// initMu, so there is no inverse nesting and no deadlock.
+	initInflightMu sync.Mutex
+	reqID          atomic.Int64
 	// sessionID holds the Mcp-Session-Id captured from the initialize response,
 	// per MCP 2025-03-26 Streamable HTTP spec. nil means "no session"; the
 	// transport then omits the header entirely (servers that do not issue a
@@ -152,7 +164,7 @@ func NewMcpTransport(apiKey string, baseURL string, opts ...TransportOption) (*M
 	t := &McpTransport{
 		client: &http.Client{
 			Timeout:   DefaultMCPTimeout,
-			Transport: buildTransportChain([]byte(apiKey), baseTransport, resolvedURL),
+			Transport: baseTransport,
 		},
 		url:        resolvedURL,
 		token:      []byte(apiKey),
@@ -162,6 +174,21 @@ func NewMcpTransport(apiKey string, baseURL string, opts ...TransportOption) (*M
 	for _, opt := range opts {
 		opt(t)
 	}
+
+	// Re-wrap the (possibly option-supplied) client's transport through the
+	// auth + TLS chain AFTER options run. Without this step, a caller using
+	// WithMCPHTTPClient with a default *http.Client would lose defaultTLSConfig
+	// (TLS 1.2+ floor and AEAD cipher restrictions) and the authTransport
+	// wrapper, opening a downgrade-to-cleartext path that would leak the
+	// manually-attached Bearer token (audit CRITICAL-2).
+	if t.client == nil {
+		t.client = &http.Client{Timeout: DefaultMCPTimeout}
+	}
+	inner := t.client.Transport
+	if inner == nil {
+		inner = http.DefaultTransport
+	}
+	t.client.Transport = buildTransportChain(t.token, inner, resolvedURL)
 
 	return t, nil
 }
@@ -185,10 +212,12 @@ func (t *McpTransport) handleHTTPError(resp *http.Response) error {
 	case http.StatusNotFound:
 		return ErrNotFound
 	case http.StatusTooManyRequests:
-		retryAfter := 0
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			fmt.Sscanf(ra, "%d", &retryAfter) //nolint:errcheck
-		}
+		// Reuse the REST path's parser so the value is clamped to
+		// maxRetryAfterSeconds and supports both integer-seconds and
+		// HTTP-date formats. Without the clamp a hostile server could
+		// return Retry-After: 86400 and force a 24-hour wait on any
+		// caller that respects the value (audit MEDIUM-6).
+		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
 		return &APIError{
 			StatusCode: 429,
 			Message:    "rate limit exceeded",
@@ -238,15 +267,43 @@ func (t *McpTransport) handleJSONRPCError(resp *JSONRPCResponse) error {
 // calls.
 //
 // Concurrency:
-//   - Calling Initialize directly is safe to use once before any CallTool.
+//   - Initialize is safe to call concurrently from multiple goroutines.
+//     The stampede guard (initInflightMu, double-checked locking via
+//     initialized.Load) ensures only one goroutine performs the actual
+//     handshake; subsequent callers short-circuit on the published state
+//     and return immediately. Without this guard a worker pool that
+//     pre-initialized would issue N parallel handshakes against the
+//     server.
 //   - Calling Initialize concurrently with in-flight CallTool requests is
 //     permitted (no deadlock, no data corruption), but may cause a CallTool
 //     in the middle of callToolOnce to surface ErrSessionLost spuriously
-//     for a backward-compat 404 — the race between the snapshot at the top
+//     for a backward-compat 404. The race between the snapshot at the top
 //     of callToolOnce and a session id newly issued mid-call is treated as
 //     session-loss by the recovery path. In steady-state usage, prefer
 //     letting CallTool's built-in init guard manage initialization.
 func (t *McpTransport) Initialize(ctx context.Context) (map[string]any, error) {
+	// Fast path: already initialized, no handshake needed. This matches
+	// ensureInitialized's behavior so direct callers get the same
+	// short-circuit. Return value is nil because we have no fresh
+	// initialize-response payload to surface; callers that need that
+	// payload must run Initialize exactly once before any concurrent
+	// secondary callers.
+	if t.initialized.Load() {
+		return nil, nil
+	}
+	t.initInflightMu.Lock()
+	defer t.initInflightMu.Unlock()
+	if t.initialized.Load() {
+		return nil, nil
+	}
+	return t.initializeLocked(ctx)
+}
+
+// initializeLocked performs the actual handshake. The caller must hold
+// initInflightMu so concurrent Initialize/ensureInitialized callers are
+// serialized; the publish-step writes still pair with initMu inside
+// initializeAttempt.
+func (t *McpTransport) initializeLocked(ctx context.Context) (map[string]any, error) {
 	req := JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      t.nextID(),
@@ -322,7 +379,7 @@ func (t *McpTransport) initializeAttempt(ctx context.Context, body []byte) (map[
 	}
 
 	var rpcResp JSONRPCResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+	if err := decodeJSONRPCResponse(resp, &rpcResp); err != nil {
 		return nil, false, err
 	}
 
@@ -337,13 +394,45 @@ func (t *McpTransport) initializeAttempt(ctx context.Context, body []byte) (map[
 	// that do not enforce sessions. The Store ordering below is load-bearing
 	// for the case B race-window guard in callToolOnce; see the doc on this
 	// function.
+	//
+	// Both writes are performed under initMu (paired with the 404-clear
+	// path in callToolOnce which also takes initMu) so the (sessionID,
+	// initialized) pair cannot be interleaved with a clear. Without this,
+	// a concurrent clear could land between the two writes and leave the
+	// transport in a torn state (initialized=true, sessionID="").
+	t.initMu.Lock()
 	t.storeSessionID(resp.Header.Get("Mcp-Session-Id"))
 	t.initialized.Store(true)
+	t.initMu.Unlock()
 
 	if result, ok := rpcResp.Result.(map[string]any); ok {
 		return result, false, nil
 	}
 	return nil, false, nil
+}
+
+// ensureInitialized runs Initialize with stampede protection: only one
+// goroutine at a time may have an Initialize round-trip in flight against
+// the server. Other callers block on initInflightMu and short-circuit on
+// the second atomic check once the first caller finishes.
+//
+// initInflightMu is distinct from initMu. initMu protects the
+// (sessionID, initialized) publish step inside initializeAttempt and the
+// matching clear in callToolOnce's 404 path. Mixing the two would
+// deadlock: callToolOnce's clear path takes initMu, and if ensureInitialized
+// also held initMu across the network round-trip, a concurrent 404 clear
+// would block waiting for the in-flight Initialize.
+func (t *McpTransport) ensureInitialized(ctx context.Context) error {
+	if t.initialized.Load() {
+		return nil
+	}
+	t.initInflightMu.Lock()
+	defer t.initInflightMu.Unlock()
+	if t.initialized.Load() {
+		return nil
+	}
+	_, err := t.initializeLocked(ctx)
+	return err
 }
 
 // ==================== CallTool ====================
@@ -357,16 +446,16 @@ func (t *McpTransport) CallTool(ctx context.Context, toolName string, args map[s
 		// Init guard inside the loop so session-loss recovery (which clears
 		// t.initialized) re-fires Initialize on the next iteration. The
 		// fast-path atomic load keeps the common case lock-free.
+		//
+		// Serialization against concurrent callers (no init stampede) and
+		// pairing with the 404-clear path are owned by ensureInitialized
+		// and initializeAttempt themselves; we do NOT hold initMu across
+		// the Initialize call here, because initializeAttempt publishes
+		// the (sessionID, initialized) pair under initMu and re-entering
+		// would deadlock.
 		if !t.initialized.Load() {
-			t.initMu.Lock()
-			if !t.initialized.Load() {
-				_, initErr := t.Initialize(ctx)
-				t.initMu.Unlock()
-				if initErr != nil {
-					return nil, initErr
-				}
-			} else {
-				t.initMu.Unlock()
+			if err := t.ensureInitialized(ctx); err != nil {
+				return nil, err
 			}
 		}
 
@@ -506,7 +595,7 @@ func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args m
 	}
 
 	var rpcResp JSONRPCResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+	if err := decodeJSONRPCResponse(resp, &rpcResp); err != nil {
 		return nil, err
 	}
 
@@ -559,6 +648,43 @@ func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args m
 	}
 
 	return parsed, nil
+}
+
+// decodeJSONRPCResponse decodes a JSON-RPC envelope from resp with a hard
+// cap of maxResponseBodyBytes (10 MB, mirrors the REST path's
+// readResponseBody).
+//
+// Two-stage size enforcement:
+//
+//  1. If resp.ContentLength is non-negative and already exceeds the cap,
+//     return the sentinel error WITHOUT touching the body. This bounds
+//     memory even before the first read: a malicious server advertising
+//     a multi-gigabyte payload is rejected for free.
+//
+//  2. Otherwise, read through an io.LimitReader of cap+1 and reject if the
+//     body itself runs over. This catches servers that lie about
+//     Content-Length or send chunked transfer with no length up front.
+//
+// Returning the sentinel via the same string in both branches keeps the
+// error contract stable for callers and for the audit-driven test that
+// asserts no body bytes are read when Content-Length already trips the
+// cap.
+func decodeJSONRPCResponse(resp *http.Response, v *JSONRPCResponse) error {
+	if resp.ContentLength > int64(maxResponseBodyBytes) {
+		return fmt.Errorf("MCP response body exceeds maximum size of %d bytes", maxResponseBodyBytes)
+	}
+	limited := io.LimitReader(resp.Body, int64(maxResponseBodyBytes)+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return fmt.Errorf("failed to read MCP response body: %w", err)
+	}
+	if len(body) > maxResponseBodyBytes {
+		return fmt.Errorf("MCP response body exceeds maximum size of %d bytes", maxResponseBodyBytes)
+	}
+	if err := json.Unmarshal(body, v); err != nil {
+		return err
+	}
+	return nil
 }
 
 // isServerError checks if an error is a server error that should be retried
