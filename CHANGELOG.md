@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **HTTP/2 ALPN advertised without handler (CRITICAL).** v0.6.2's
+  transport-bypass audit fix introduced `httpTransport.Clone()` in
+  `enforceTLS`. The clone's `TLSClientConfig` inherits
+  `NextProtos: ["h2", "http/1.1"]` from the source's lazy auto-init, but the
+  clone's own auto-init early-returns when `TLSClientConfig` is custom,
+  leaving an empty `TLSNextProto` map. Result: all HTTPS calls to
+  non-localhost servers failed with `malformed HTTP response \x00\x00...`
+  or `Unsolicited response received on idle HTTP channel`. Affects both
+  REST (`hyperping.NewClient`) and MCP (`hyperping.NewMcpTransport`) paths.
+  Localhost was unaffected (early-return path), which is why the SDK's
+  own test suite did not catch it. Fixed by setting
+  `cloned.ForceAttemptHTTP2 = true` after `Clone`, instructing Go's stdlib
+  to auto-init h2 even when `TLSConfig` is custom. The existing TLS
+  hardening (MinVersion TLS 1.2, AEAD cipher suites) is preserved.
+
 ## [0.6.2] - 2026-05-31
 
 ### Security

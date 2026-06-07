@@ -77,6 +77,15 @@ func buildTransportChain(apiKey []byte, baseTransport http.RoundTripper, baseURL
 
 // enforceTLS applies TLS restrictions to the transport based on the base URL.
 // Localhost targets (used in tests with httptest) are exempt.
+//
+// Invariant: any *http.Transport returned by this function MUST NOT advertise
+// h2 in TLSClientConfig.NextProtos unless TLSNextProto["h2"] is also set.
+// TestEnforceTLS_HTTP2InvariantIfAdvertisedThenHandlerExists (and the
+// REST/MCP path siblings in transport_http2_test.go) guard this; do not
+// weaken or remove those tests without understanding the failure mode --
+// see the fix(transport) commit on this function for context (v0.6.3
+// release; the bug shipped in v0.6.2 and broke all HTTPS calls to
+// non-localhost servers).
 func enforceTLS(transport http.RoundTripper, baseURL string) http.RoundTripper {
 	parsed, err := url.Parse(baseURL)
 	isLocalhost := false
@@ -110,6 +119,24 @@ func enforceTLS(transport http.RoundTripper, baseURL string) http.RoundTripper {
 	// caller asked for something lower, CipherSuites are set only when the
 	// caller did not supply their own (so caller-specified suites win).
 	cloned := httpTransport.Clone()
+	// Clone() triggers Go's HTTP/2 auto-init on the SOURCE transport, which
+	// populates source.TLSClientConfig.NextProtos with ["h2", "http/1.1"].
+	// The clone deep-copies that TLSClientConfig (NextProtos carries over),
+	// but does NOT copy TLSNextProto when the source's TLSNextProto was
+	// originally nil (the tlsNextProtoWasNil guard in net/http.Transport.Clone).
+	// Then, on first use of the clone, stdlib's onceSetNextProtoDefaults
+	// early-returns because we set a custom TLSClientConfig below:
+	// `case !ForceAttemptHTTP2 && (TLSClientConfig != nil || ...)` in
+	// transport.go:protocols() matches and h2 is left unconfigured. The
+	// clone then advertises h2 in ALPN with no h2 handler registered,
+	// causing "malformed HTTP response \x00\x00..." on any h2-supporting
+	// server.
+	//
+	// ForceAttemptHTTP2 = true tells stdlib to auto-init h2 even when
+	// TLSClientConfig is custom. The TLS hardening below (MinVersion,
+	// CipherSuites) is preserved. See
+	// https://pkg.go.dev/net/http#Transport.ForceAttemptHTTP2.
+	cloned.ForceAttemptHTTP2 = true
 	var tlsCfg *tls.Config
 	if cloned.TLSClientConfig != nil {
 		tlsCfg = cloned.TLSClientConfig.Clone()
