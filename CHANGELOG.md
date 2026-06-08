@@ -7,7 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-08
+
 ### Fixed
+
+- **MCP windowed reporting tools were silently returning all-zero values
+  (CRITICAL).** Four `MCPClient` methods sent the wrong request-arg name
+  to the Hyperping MCP server AND decoded the response into structs
+  whose fields the server never returned. Every existing caller saw a
+  populated `*Response` with all-zero fields and no error. Affected
+  methods, with the wire-level mismatch:
+
+  | Method | v0.6.x request arg | server expects | v0.6.x response struct | server response shape |
+  |--------|--------------------|----------------|------------------------|-----------------------|
+  | `GetMonitorMtta` | `uuid` (string) | `monitor_uuids` ([]string), `from`, `to` | `MttaReport{AvgWait,MinWait,MaxWait,TotalAlerts,Acknowledged}` | `{monitors[], totalAcknowledged, mtta}` |
+  | `GetMonitorMttr` | `uuid` (string) | `monitor_uuids` ([]string), `from`, `to` | `MttrReport{AvgResolve,MinResolve,MaxResolve,TotalOutages,Resolved}` | `{monitors[], totalOutages, totalOutagesLength, mttr, mtta}` |
+  | `GetMonitorResponseTime` | `uuid` (string) | `monitor_uuids` ([]string), `from`, `to` | `ResponseTimeReport{UUID,Avg,Min,Max}` | `{timeGroups[], avgResponseTime, p95ResponseTime, monitors[]}` |
+  | `GetMonitorUptime` | `monitor_uuid` (string) | `monitor_uuids` ([]string), `from`, `to` | `UptimeReport{Uptime,TotalDays,UptimeDays}` | `{monitors[], periodAverages[], totalOutages, totalOutagesLength, MTTR, averageUptime}` |
+
+  Discovered during hyperping-exporter incident triage when the
+  `hyperping_monitor_mtta_seconds` Prometheus series stayed at 0 across
+  all 47 monitor labels for months. Probed against
+  `https://api.hyperping.io/v1/mcp` on 2026-06-08 to confirm the actual
+  wire formats above.
+
+### Changed (BREAKING)
+
+- `GetMonitorMtta`, `GetMonitorMttr`, `GetMonitorResponseTime`, and
+  `GetMonitorUptime` migrated to a canonical signature:
+
+  ```go
+  func (c *MCPClient) GetMonitorMtta(ctx context.Context, from, to time.Time, uuids ...string) (*MonitorMttaResponse, error)
+  ```
+
+  Semantics:
+  - Zero-value `from`/`to` omits the param so the server uses its declared
+    default window (30 days at the time of release).
+  - Empty `uuids` omits `monitor_uuids` entirely, which the server treats
+    as "all monitors in the project."
+  - ISO-8601 formatting for `from`/`to` is handled internally; callers
+    always pass `time.Time`.
+- Response types renamed and rewritten to match the server's actual shape:
+  `MttaReport` → `MonitorMttaResponse`, `MttrReport` → `MonitorMttrResponse`,
+  `ResponseTimeReport` → `MonitorResponseTimeResponse`,
+  `UptimeReport` → `MonitorUptimeResponse`. Each adds typed per-monitor
+  entry structs (`MonitorMttrEntry`, `MonitorResponseTimeEntry`,
+  `MonitorUptimeEntry`, etc.).
+- `MonitorResponseTimeEntry.AvgResponseTimeByRegion` uses `*float64` to
+  preserve the server's null-vs-zero distinction; regions with no probes
+  in the window decode as nil pointers rather than 0.
+- `MonitorUptimeResponse.AverageUptime` is a string (the server returns
+  `"100%"` at the top level) while per-monitor `AverageUptime` is a float.
+  The typed asymmetry mirrors the server.
+- SDK `clientInfo.version` reported during MCP initialize bumped from
+  `0.6.2` to `0.7.0`.
+
+### Added
+
+- **Schema snapshot test (no live calls).** `testdata/mcp_tools_list.json`
+  pins the live MCP server's `tools/list` response captured during this
+  release. `schema_contract_test.go` iterates the wrapped tools and
+  asserts every request-arg name the client sends is declared in the
+  snapshot's `inputSchema.properties`. A targeted assertion guards the
+  v0.6.3 bug specifically: each of the four windowed tools must declare
+  `monitor_uuids: array`. Re-capturing the snapshot is a deliberate
+  maintenance step so drift surfaces in code review, not silently.
+- **Live-server integration tests.** `integration_test.go` (build tag
+  `integration`) issues real `CallTool` requests for the four windowed
+  tools and asserts decode-into-the-v0.7.0-models succeeds. Skips
+  cleanly with `t.Skip` when `HYPERPING_TEST_API_KEY` is unset.
+- CI workflow adds a separate `integration` job, guarded by the same
+  env var, that PRs from forks skip transparently.
+
+### Fixed (carried over from Unreleased)
 
 - **HTTP/2 ALPN advertised without handler (CRITICAL).** v0.6.2's
   transport-bypass audit fix introduced `httpTransport.Clone()` in
@@ -23,6 +95,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cloned.ForceAttemptHTTP2 = true` after `Clone`, instructing Go's stdlib
   to auto-init h2 even when `TLSConfig` is custom. The existing TLS
   hardening (MinVersion TLS 1.2, AEAD cipher suites) is preserved.
+
+### Migration notes for downstream consumers
+
+The primary consumer is `develeap/hyperping-exporter`. Migration is
+mechanical:
+
+```go
+// before (v0.6.x):
+report, err := mcp.GetMonitorMtta(ctx, monitorUUID)
+//   uses: report.AvgWait, report.TotalAlerts, ...
+
+// after (v0.7.0):
+now := time.Now().UTC()
+resp, err := mcp.GetMonitorMtta(ctx, now.Add(-24*time.Hour), now, monitorUUID)
+//   uses: resp.Mtta, resp.TotalAcknowledged, resp.Monitors[*].Mtta
+```
+
+The exporter's existing 47-series `hyperping_monitor_mtta_seconds` will
+begin emitting real (non-zero) values after the migration.
 
 ## [0.6.2] - 2026-05-31
 

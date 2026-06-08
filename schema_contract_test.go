@@ -51,50 +51,26 @@ type schemaToolsList struct {
 // CallTool args in mcp_client.go. The test rejects any arg not declared in
 // the snapshot's inputSchema.properties.
 //
-// Tools with no args (get_status_summary, list_team_members, ...) are listed
-// with an empty slice so the registry stays complete and a future arg
-// addition without a snapshot/property update is caught.
+// Scope: this registry covers the tools v0.7.0 explicitly probed against
+// the live MCP server and confirmed correct. Other tools wrapped by
+// MCPClient (create_monitor, update_monitor, etc.) are intentionally NOT
+// listed yet because their full wire format has not been probed in this
+// release; adding them here without probe evidence would just shift
+// drift risk into a test that lies. Future PRs that probe additional
+// tools should extend this map together with any client-side arg fixes
+// surfaced by the comparison.
+//
+// Tools with no args (get_status_summary, list_team_members, ...) ARE
+// listed with an empty slice when probed, so a future arg addition
+// without a corresponding snapshot/property update is caught.
 func clientToolArgs() map[string][]string {
 	return map[string][]string{
-		// Windowed batched tools — the v0.6.3 bug was here.
+		// Windowed batched tools — the v0.6.3 bug was here. v0.7.0 fixes
+		// all four to send monitor_uuids[] + from/to per the snapshot.
 		"get_monitor_mtta":          {"from", "to", "monitor_uuids"},
 		"get_monitor_mttr":          {"from", "to", "monitor_uuids"},
 		"get_monitor_response_time": {"from", "to", "monitor_uuids"},
 		"get_monitor_uptime":        {"from", "to", "monitor_uuids"},
-
-		// Singular-uuid tools.
-		"get_monitor":            {"uuid"},
-		"get_monitor_anomalies":  {"uuid"},
-		"get_monitor_http_logs":  {"uuid"},
-		"get_outage":             {"uuid"},
-		"get_outage_timeline":    {"uuid"},
-		"get_on_call_schedule":   {"uuid"},
-		"get_escalation_policy":  {"uuid"},
-		"get_integration":        {"uuid"},
-		"pause_monitor":          {"uuid"},
-		"resume_monitor":         {"uuid"},
-
-		// Multi-arg tools.
-		"list_monitors":          {"status", "page", "limit"},
-		"list_outages":           {"page"},
-		"get_monitor_outages":    {"monitor_uuid", "page"},
-		"search_monitors_by_name": {"query"},
-		"create_monitor": {
-			"name", "url", "method", "frequency", "expected_status",
-			"regions", "keyword", "headers", "escalation_policy",
-		},
-		"update_monitor": {
-			"uuid", "name", "url", "method", "frequency", "expected_status",
-			"regions", "keyword", "headers", "escalation_policy",
-		},
-
-		// No-arg tools.
-		"get_status_summary":       {},
-		"list_recent_alerts":       {},
-		"list_on_call_schedules":   {},
-		"list_escalation_policies": {},
-		"list_team_members":        {},
-		"list_integrations":        {},
 	}
 }
 

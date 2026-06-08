@@ -11,29 +11,84 @@ type StatusSummary struct {
 	Down  int `json:"down"`
 }
 
-type ResponseTimeReport struct {
-	UUID string  `json:"uuid"`
-	Avg  float64 `json:"avg"`
-	Min  float64 `json:"min"`
-	Max  float64 `json:"max"`
+// ==================== MTTA (windowed) ====================
+//
+// v0.7.0 BREAKING: replaces MttaReport. The pre-v0.7.0 struct modeled
+// fields that the server never returned, so every call decoded zero
+// values silently. The shape below matches the live MCP server
+// (probed 2026-06-08 against /v1/mcp tools/call get_monitor_mtta):
+//
+//   {
+//     "monitors": [ ... per-monitor entries when alerts present ... ],
+//     "totalAcknowledged": N,
+//     "mtta": <seconds>
+//   }
+//
+// Per-monitor MTTA entries mirror the MTTR per-monitor shape for
+// forward-compatibility; the server returns an empty array when there
+// are no acknowledged alerts in the window.
+type MonitorMttaResponse struct {
+	Monitors          []MonitorMttaEntry `json:"monitors"`
+	TotalAcknowledged int                `json:"totalAcknowledged"`
+	Mtta              float64            `json:"mtta"`
 }
 
-type MttaReport struct {
-	UUID      string  `json:"uuid,omitempty"`
-	AvgWait   float64 `json:"avg_wait"`
-	MinWait   float64 `json:"min_wait"`
-	MaxWait   float64 `json:"max_wait"`
-	TotalAlerts int   `json:"total_alerts"`
-	Acknowledged int `json:"acknowledged"`
+type MonitorMttaEntry struct {
+	UUID         string  `json:"uuid"`
+	Name         string  `json:"name"`
+	Protocol     string  `json:"protocol"`
+	Acknowledged int     `json:"acknowledged"`
+	Mtta         float64 `json:"mtta"`
 }
 
-type MttrReport struct {
-	UUID      string  `json:"uuid,omitempty"`
-	AvgResolve float64 `json:"avg_resolve"`
-	MinResolve float64 `json:"min_resolve"`
-	MaxResolve float64 `json:"max_resolve"`
-	TotalOutages int   `json:"total_outages"`
-	Resolved    int   `json:"resolved"`
+// ==================== MTTR (windowed) ====================
+//
+// v0.7.0 BREAKING: replaces MttrReport.
+type MonitorMttrResponse struct {
+	Monitors           []MonitorMttrEntry `json:"monitors"`
+	TotalOutages       int                `json:"totalOutages"`
+	TotalOutagesLength int                `json:"totalOutagesLength"`
+	Mttr               float64            `json:"mttr"`
+	Mtta               float64            `json:"mtta"`
+}
+
+type MonitorMttrEntry struct {
+	UUID          string  `json:"uuid"`
+	Name          string  `json:"name"`
+	Protocol      string  `json:"protocol"`
+	OutageCount   int     `json:"outageCount"`
+	TotalDowntime float64 `json:"totalDowntime"`
+	Mttr          float64 `json:"mttr"`
+	Mtta          float64 `json:"mtta"`
+	LongestOutage float64 `json:"longestOutage"`
+}
+
+// ==================== Response time (windowed) ====================
+//
+// v0.7.0 BREAKING: replaces ResponseTimeReport.
+type MonitorResponseTimeResponse struct {
+	TimeGroups      []ResponseTimeGroup           `json:"timeGroups"`
+	AvgResponseTime float64                       `json:"avgResponseTime"`
+	P95ResponseTime float64                       `json:"p95ResponseTime"`
+	Monitors        []MonitorResponseTimeEntry    `json:"monitors"`
+}
+
+type ResponseTimeGroup struct {
+	Time            string  `json:"time"`
+	AvgResponseTime float64 `json:"avgResponseTime"`
+	Count           int     `json:"count"`
+}
+
+// AvgResponseTimeByRegion uses *float64 because the server returns null for
+// regions that recorded no probes in the window. Differentiating "no data"
+// from "0 ms" matters for downstream metric emission.
+type MonitorResponseTimeEntry struct {
+	UUID                    string              `json:"uuid"`
+	Name                    string              `json:"name"`
+	Protocol                string              `json:"protocol"`
+	AvgResponseTime         float64             `json:"avgResponseTime"`
+	AvgResponseTimeByRegion map[string]*float64 `json:"avgResponseTimeByRegion"`
+	Count                   int                 `json:"count"`
 }
 
 // ==================== Observability Models ====================
@@ -137,13 +192,35 @@ type OutageEvent struct {
 	Note     string `json:"note,omitempty"`
 }
 
-// ==================== Uptime Models ====================
+// ==================== Uptime (windowed) ====================
+//
+// v0.7.0 BREAKING: replaces UptimeReport. Note that the server returns
+// the top-level AverageUptime as a string ("100%") and the per-monitor
+// AverageUptime as a number — the types here reflect that asymmetry.
+type MonitorUptimeResponse struct {
+	Monitors           []MonitorUptimeEntry `json:"monitors"`
+	PeriodAverages     []UptimePeriod       `json:"periodAverages"`
+	TotalOutages       int                  `json:"totalOutages"`
+	TotalOutagesLength int                  `json:"totalOutagesLength"`
+	MTTR               float64              `json:"MTTR"`
+	AverageUptime      string               `json:"averageUptime"`
+}
 
-type UptimeReport struct {
-	UUID       string  `json:"uuid,omitempty"`
-	Uptime     float64 `json:"uptime"`      // percentage
-	TotalDays  int     `json:"total_days"`
-	UptimeDays int     `json:"uptime_days"`
+type MonitorUptimeEntry struct {
+	UUID          string         `json:"uuid"`
+	Name          string         `json:"name"`
+	Protocol      string         `json:"protocol"`
+	UptimePeriods []UptimePeriod `json:"uptimePeriods"`
+	AverageUptime float64        `json:"averageUptime"`
+	OutageCount   int            `json:"outageCount"`
+	TotalDowntime float64        `json:"totalDowntime"`
+	Mttr          float64        `json:"mttr"`
+	LongestOutage float64        `json:"longestOutage"`
+}
+
+type UptimePeriod struct {
+	Date   string  `json:"date"`
+	Uptime float64 `json:"uptime"`
 }
 
 // ==================== Outage Models ====================
