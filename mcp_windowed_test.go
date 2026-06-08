@@ -330,20 +330,42 @@ func TestGetMonitorMtta_MultiUUIDBatch(t *testing.T) {
 	require.Equal(t, uuids, got)
 }
 
-func TestGetMonitorMtta_CtxCancel(t *testing.T) {
-	tr := &errMCPTransport{err: context.Canceled}
-	c := NewMCPClient(tr)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := c.GetMonitorMtta(ctx, time.Time{}, time.Time{}, "mon_a")
-	require.Error(t, err)
-}
-
-func TestGetMonitorMttr_ServerErrorPropagates(t *testing.T) {
-	tr := &errMCPTransport{err: ErrServerError}
-	c := NewMCPClient(tr)
-	_, err := c.GetMonitorMttr(context.Background(), time.Time{}, time.Time{}, "mon_a")
-	require.Error(t, err)
+// TestWindowedMethods_CtxCancelAndServerError covers ctx cancellation and
+// server-error propagation symmetrically across all four windowed methods,
+// rather than just one of them. A refactor that drops error propagation
+// in any of them would trip this matrix.
+func TestWindowedMethods_CtxCancelAndServerError(t *testing.T) {
+	type call func(ctx context.Context, c *MCPClient) error
+	cases := map[string]call{
+		"GetMonitorMtta": func(ctx context.Context, c *MCPClient) error {
+			_, err := c.GetMonitorMtta(ctx, time.Time{}, time.Time{}, "mon_a")
+			return err
+		},
+		"GetMonitorMttr": func(ctx context.Context, c *MCPClient) error {
+			_, err := c.GetMonitorMttr(ctx, time.Time{}, time.Time{}, "mon_a")
+			return err
+		},
+		"GetMonitorResponseTime": func(ctx context.Context, c *MCPClient) error {
+			_, err := c.GetMonitorResponseTime(ctx, time.Time{}, time.Time{}, "mon_a")
+			return err
+		},
+		"GetMonitorUptime": func(ctx context.Context, c *MCPClient) error {
+			_, err := c.GetMonitorUptime(ctx, time.Time{}, time.Time{}, "mon_a")
+			return err
+		},
+	}
+	for name, fn := range cases {
+		t.Run(name+"/ctx_cancel", func(t *testing.T) {
+			c := NewMCPClient(&errMCPTransport{err: context.Canceled})
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			require.Error(t, fn(ctx, c))
+		})
+		t.Run(name+"/server_error", func(t *testing.T) {
+			c := NewMCPClient(&errMCPTransport{err: ErrServerError})
+			require.Error(t, fn(context.Background(), c))
+		})
+	}
 }
 
 // errMCPTransport implements MCPTransport and returns a configured error.
