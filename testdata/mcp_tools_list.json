@@ -1,0 +1,976 @@
+{
+    "result": {
+        "tools": [
+            {
+                "name": "list_monitors",
+                "title": "List monitors",
+                "description": "Paginated monitors in the project. Optional status filter (up/down/paused/ssl_expiring).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "status": {
+                            "type": "string",
+                            "enum": [
+                                "up",
+                                "down",
+                                "paused",
+                                "ssl_expiring"
+                            ],
+                            "description": "Filter by state. \"ssl_expiring\" = SSL expires within 30 days."
+                        },
+                        "page": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Zero-indexed page. Default 0."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200,
+                            "description": "Rows per page. Default 50, max 200."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_monitor",
+                "title": "Get monitor",
+                "description": "Fetch a single monitor by its UUID.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {
+                            "type": "string",
+                            "description": "Monitor UUID (format \"mon_...\")"
+                        }
+                    },
+                    "required": [
+                        "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "create_monitor",
+                "title": "Create monitor",
+                "description": "Create a new monitor. Requires name+url; add \"port\" for port checks, \"dns_*\" for DNS checks.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 1024,
+                            "description": "Human-readable monitor name."
+                        },
+                        "url": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 1024,
+                            "description": "Target URL (http) or hostname (icmp/port/dns)."
+                        },
+                        "protocol": {
+                            "type": "string",
+                            "enum": [
+                                "http",
+                                "icmp",
+                                "port",
+                                "dns"
+                            ],
+                            "description": "Check protocol. Defaults to \"http\"."
+                        },
+                        "port": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 65535,
+                            "description": "TCP port \u2014 required when protocol is \"port\"."
+                        },
+                        "http_method": {
+                            "type": "string",
+                            "enum": [
+                                "GET",
+                                "POST",
+                                "PUT",
+                                "HEAD",
+                                "DELETE",
+                                "PATCH",
+                                "OPTIONS"
+                            ],
+                            "description": "HTTP verb. Defaults to GET."
+                        },
+                        "regions": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Probe region codes, e.g. [\"us-east\",\"eu-west\"]. Use [\"*\"] for all."
+                        },
+                        "check_frequency": {
+                            "type": "number",
+                            "description": "Check interval in seconds. Sub-30s requires a business plan."
+                        },
+                        "follow_redirects": {
+                            "type": "boolean",
+                            "description": "Follow 3xx redirects on http monitors."
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 60,
+                            "description": "Request timeout in seconds (default 30)."
+                        },
+                        "expected_status_code": {
+                            "type": [
+                                "string",
+                                "number"
+                            ],
+                            "description": "Expected response status: number (200), \"2xx\", or \"1xx-3xx\"."
+                        },
+                        "request_body": {
+                            "type": "string",
+                            "maxLength": 512,
+                            "description": "Body for http requests."
+                        },
+                        "request_headers": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {
+                                        "type": "string",
+                                        "description": "Header name, e.g. \"Authorization\""
+                                    },
+                                    "value": {
+                                        "type": "string",
+                                        "description": "Header value"
+                                    }
+                                },
+                                "required": [
+                                    "name",
+                                    "value"
+                                ],
+                                "additionalProperties": false
+                            },
+                            "description": "Custom request headers."
+                        },
+                        "required_keyword": {
+                            "type": "string",
+                            "maxLength": 1024,
+                            "description": "Body must contain this keyword, else flagged down."
+                        },
+                        "paused": {
+                            "type": "boolean",
+                            "description": "Start the monitor in a paused state."
+                        },
+                        "alerts_wait": {
+                            "type": "number",
+                            "description": "Minutes to wait before alerting. -1 disables, 0 is immediate."
+                        },
+                        "dns_record_type": {
+                            "type": "string",
+                            "enum": [
+                                "A",
+                                "AAAA",
+                                "CNAME",
+                                "MX",
+                                "NS",
+                                "TXT",
+                                "SOA",
+                                "SRV",
+                                "CAA",
+                                "PTR"
+                            ],
+                            "description": "DNS record type (protocol=\"dns\")."
+                        },
+                        "dns_nameserver": {
+                            "type": "string",
+                            "maxLength": 256,
+                            "description": "Custom nameserver for DNS checks."
+                        },
+                        "dns_expected_answer": {
+                            "type": "string",
+                            "maxLength": 1024,
+                            "description": "Expected DNS answer to assert against."
+                        },
+                        "escalation_policy": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "description": "UUID of an escalation policy to link."
+                        },
+                        "group_id": {
+                            "anyOf": [
+                                {
+                                    "type": "integer"
+                                },
+                                {
+                                    "type": "string"
+                                }
+                            ],
+                            "description": "Group to place the monitor in."
+                        }
+                    },
+                    "required": [
+                        "name",
+                        "url"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "update_monitor",
+                "title": "Update monitor",
+                "description": "Patch a monitor. Pass only fields you want to change; others are preserved.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {
+                            "type": "string",
+                            "description": "UUID of the monitor to update."
+                        },
+                        "name": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 1024,
+                            "description": "Human-readable monitor name."
+                        },
+                        "url": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 1024,
+                            "description": "Target URL (http) or hostname (icmp/port/dns)."
+                        },
+                        "protocol": {
+                            "type": "string",
+                            "enum": [
+                                "http",
+                                "icmp",
+                                "port",
+                                "dns"
+                            ],
+                            "description": "Check protocol. Defaults to \"http\"."
+                        },
+                        "port": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 65535,
+                            "description": "TCP port \u2014 required when protocol is \"port\"."
+                        },
+                        "http_method": {
+                            "type": "string",
+                            "enum": [
+                                "GET",
+                                "POST",
+                                "PUT",
+                                "HEAD",
+                                "DELETE",
+                                "PATCH",
+                                "OPTIONS"
+                            ],
+                            "description": "HTTP verb. Defaults to GET."
+                        },
+                        "regions": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Probe region codes, e.g. [\"us-east\",\"eu-west\"]. Use [\"*\"] for all."
+                        },
+                        "check_frequency": {
+                            "type": "number",
+                            "description": "Check interval in seconds. Sub-30s requires a business plan."
+                        },
+                        "follow_redirects": {
+                            "type": "boolean",
+                            "description": "Follow 3xx redirects on http monitors."
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 60,
+                            "description": "Request timeout in seconds (default 30)."
+                        },
+                        "expected_status_code": {
+                            "type": [
+                                "string",
+                                "number"
+                            ],
+                            "description": "Expected response status: number (200), \"2xx\", or \"1xx-3xx\"."
+                        },
+                        "request_body": {
+                            "type": "string",
+                            "maxLength": 512,
+                            "description": "Body for http requests."
+                        },
+                        "request_headers": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {
+                                        "type": "string",
+                                        "description": "Header name, e.g. \"Authorization\""
+                                    },
+                                    "value": {
+                                        "type": "string",
+                                        "description": "Header value"
+                                    }
+                                },
+                                "required": [
+                                    "name",
+                                    "value"
+                                ],
+                                "additionalProperties": false
+                            },
+                            "description": "Custom request headers."
+                        },
+                        "required_keyword": {
+                            "type": "string",
+                            "maxLength": 1024,
+                            "description": "Body must contain this keyword, else flagged down."
+                        },
+                        "paused": {
+                            "type": "boolean",
+                            "description": "Start the monitor in a paused state."
+                        },
+                        "alerts_wait": {
+                            "type": "number",
+                            "description": "Minutes to wait before alerting. -1 disables, 0 is immediate."
+                        },
+                        "dns_record_type": {
+                            "type": "string",
+                            "enum": [
+                                "A",
+                                "AAAA",
+                                "CNAME",
+                                "MX",
+                                "NS",
+                                "TXT",
+                                "SOA",
+                                "SRV",
+                                "CAA",
+                                "PTR"
+                            ],
+                            "description": "DNS record type (protocol=\"dns\")."
+                        },
+                        "dns_nameserver": {
+                            "type": "string",
+                            "maxLength": 256,
+                            "description": "Custom nameserver for DNS checks."
+                        },
+                        "dns_expected_answer": {
+                            "type": "string",
+                            "maxLength": 1024,
+                            "description": "Expected DNS answer to assert against."
+                        },
+                        "escalation_policy": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "description": "UUID of an escalation policy to link."
+                        },
+                        "group_id": {
+                            "anyOf": [
+                                {
+                                    "type": "integer"
+                                },
+                                {
+                                    "type": "string"
+                                }
+                            ],
+                            "description": "Group to place the monitor in."
+                        }
+                    },
+                    "required": [
+                        "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "pause_monitor",
+                "title": "Pause monitor",
+                "description": "Pause a monitor \u2014 no checks run and no alerts fire. Same as update_monitor with paused=true.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {
+                            "type": "string",
+                            "description": "UUID of the monitor to pause."
+                        }
+                    },
+                    "required": [
+                        "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "resume_monitor",
+                "title": "Resume monitor",
+                "description": "Resume a paused monitor. Same as update_monitor with paused=false.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {
+                            "type": "string",
+                            "description": "UUID of the monitor to resume."
+                        }
+                    },
+                    "required": [
+                        "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "search_monitors_by_name",
+                "title": "Search monitors by name",
+                "description": "Case-insensitive substring search across monitor names and URLs.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Case-insensitive substring matched against monitor names or URLs."
+                        }
+                    },
+                    "required": [
+                        "query"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_status_summary",
+                "title": "Status summary",
+                "description": "Up/down/paused counts plus a list of currently down monitors with the timestamp they went down.",
+                "inputSchema": {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "type": "object",
+                    "properties": {}
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "list_outages",
+                "title": "List outages",
+                "description": "Paginated list of outages in the project. Filter by status, type, or search term.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "page": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Zero-indexed page number, 20 outages per page."
+                        },
+                        "search": {
+                            "type": "string",
+                            "description": "Substring matched against monitor name/URL/domain or \"INC-123\"."
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": [
+                                "all",
+                                "ongoing",
+                                "resolved"
+                            ],
+                            "description": "Filter by status. Defaults to \"all\"."
+                        },
+                        "type": {
+                            "type": "string",
+                            "enum": [
+                                "all",
+                                "manual",
+                                "monitor"
+                            ],
+                            "description": "Filter by type. Defaults to \"all\"."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_outage",
+                "title": "Get outage",
+                "description": "Fetch a single outage by UUID, including acknowledgements, description, and root cause.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {
+                            "type": "string",
+                            "description": "Outage UUID."
+                        }
+                    },
+                    "required": [
+                        "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_outage_timeline",
+                "title": "Get outage timeline",
+                "description": "Full activity timeline for an outage: detection, cross-region verification, alert dispatches, acknowledgement, resolution.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {
+                            "type": "string",
+                            "description": "Outage UUID (format \"outage_...\" or \"INC-123\")."
+                        }
+                    },
+                    "required": [
+                        "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_monitor_outages",
+                "title": "Get outages for a monitor",
+                "description": "Paginated list of outages scoped to one monitor. Convenience wrapper around list_outages.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "monitor_uuid": {
+                            "type": "string",
+                            "description": "Monitor UUID (format \"mon_...\") to filter by."
+                        },
+                        "page": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Zero-indexed page number, 20 per page."
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": [
+                                "all",
+                                "ongoing",
+                                "resolved"
+                            ],
+                            "description": "Filter by status. Defaults to \"all\"."
+                        }
+                    },
+                    "required": [
+                        "monitor_uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "list_recent_alerts",
+                "title": "List recent alerts",
+                "description": "Alert notifications (up/down transitions) over a date range. Defaults to last 30 days.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "from": {
+                            "type": "string",
+                            "description": "ISO start date. Default: 30 days ago."
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": "ISO end date. Default: now."
+                        },
+                        "resolution": {
+                            "type": "string",
+                            "enum": [
+                                "hour",
+                                "day",
+                                "week",
+                                "month"
+                            ],
+                            "description": "Time grouping. Default \"day\"."
+                        },
+                        "monitor_uuids": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Restrict to these monitor UUIDs."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_monitor_uptime",
+                "title": "Get uptime (SLA) stats",
+                "description": "Uptime percentage over a date window, aggregated and optionally per day/hour/week/month.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "from": {
+                            "type": "string",
+                            "description": "ISO start date. Default: 30 days ago."
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": "ISO end date. Default: now."
+                        },
+                        "monitor_uuids": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Restrict to these monitor UUIDs."
+                        },
+                        "resolution": {
+                            "type": "string",
+                            "enum": [
+                                "hour",
+                                "day",
+                                "week",
+                                "month"
+                            ],
+                            "description": "Time grouping. Default \"day\"."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_monitor_response_time",
+                "title": "Get response time",
+                "description": "Response time latency trend over a date window.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "from": {
+                            "type": "string",
+                            "description": "ISO start date. Default: 30 days ago."
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": "ISO end date. Default: now."
+                        },
+                        "monitor_uuids": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Restrict to these monitor UUIDs."
+                        },
+                        "resolution": {
+                            "type": "string",
+                            "enum": [
+                                "hour",
+                                "day",
+                                "week",
+                                "month"
+                            ],
+                            "description": "Time grouping. Default \"day\"."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_monitor_mttr",
+                "title": "Get MTTR per monitor",
+                "description": "Mean time to resolve (MTTR) per monitor over a date window, in seconds.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "from": {
+                            "type": "string",
+                            "description": "ISO start date. Default: 30 days ago."
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": "ISO end date. Default: now."
+                        },
+                        "monitor_uuids": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Restrict to these monitor UUIDs."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_monitor_mtta",
+                "title": "Get MTTA per monitor",
+                "description": "Mean time to acknowledge (MTTA) per monitor over a date window, in seconds.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "from": {
+                            "type": "string",
+                            "description": "ISO start date. Default: 30 days ago."
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": "ISO end date. Default: now."
+                        },
+                        "monitor_uuids": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Restrict to these monitor UUIDs."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_monitor_anomalies",
+                "title": "Get monitor anomalies",
+                "description": "Anomaly-detection output for a single monitor (flapping, latency spikes, etc.).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {
+                            "type": "string",
+                            "description": "Monitor UUID (format \"mon_...\")."
+                        }
+                    },
+                    "required": [
+                        "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_monitor_http_logs",
+                "title": "Get monitor HTTP logs",
+                "description": "Recent HTTP probe logs for a monitor, paginated. Useful to diagnose recent check failures.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {
+                            "type": "string",
+                            "description": "Monitor UUID (format \"mon_...\")."
+                        },
+                        "page": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Zero-indexed page. Default 0."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200,
+                            "description": "Rows per page. Default 50, max 200."
+                        },
+                        "level": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": [
+                                    "info",
+                                    "warn",
+                                    "error"
+                                ]
+                            },
+                            "description": "Filter by log level."
+                        }
+                    },
+                    "required": [
+                        "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "list_on_call_schedules",
+                "title": "List on-call schedules",
+                "description": "All on-call schedules in the project. Each entry typically includes rotation config and current on-call.",
+                "inputSchema": {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "type": "object",
+                    "properties": {}
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_on_call_schedule",
+                "title": "Get on-call schedule",
+                "description": "One schedule by UUID with full rotation detail and the linked escalation policies.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {
+                            "type": "string",
+                            "description": "Schedule UUID (format \"sch_...\")."
+                        }
+                    },
+                    "required": [
+                        "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "list_escalation_policies",
+                "title": "List escalation policies",
+                "description": "All escalation policies in the project. Use to find which monitors route alerts where.",
+                "inputSchema": {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "type": "object",
+                    "properties": {}
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_escalation_policy",
+                "title": "Get escalation policy",
+                "description": "One policy by UUID. Reveals step sequence, linked schedules, and contact channels.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {
+                            "type": "string",
+                            "description": "Escalation policy UUID (format \"esc_...\")."
+                        }
+                    },
+                    "required": [
+                        "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "list_team_members",
+                "title": "List team members",
+                "description": "Users on the project, with names and emails. Use to resolve user IDs from schedules/policies.",
+                "inputSchema": {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "type": "object",
+                    "properties": {}
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "list_integrations",
+                "title": "List integrations",
+                "description": "All notification integrations in the project (Slack, Telegram, Discord, PagerDuty, OpsGenie, Teams, webhook, etc.).",
+                "inputSchema": {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "type": "object",
+                    "properties": {}
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            },
+            {
+                "name": "get_integration",
+                "title": "Get integration",
+                "description": "One integration by UUID, with its channel-specific config (channel name, webhook URL, routing, etc.).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {
+                            "type": "string",
+                            "description": "Integration UUID (format \"int_...\")."
+                        }
+                    },
+                    "required": [
+                        "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "execution": {
+                    "taskSupport": "forbidden"
+                }
+            }
+        ]
+    },
+    "jsonrpc": "2.0",
+    "id": 99
+}

@@ -399,16 +399,28 @@ func TestStatusSummary_NullFields(t *testing.T) {
 	require.Equal(t, 0, result.Total)
 }
 
-// Test 3.3: ResponseTimeReport unmarshal
-func TestResponseTimeReport_Unmarshal(t *testing.T) {
-	data := []byte(`{"uuid":"abc","avg":100.5,"min":50,"max":200}`)
+// Test 3.3: MonitorResponseTimeResponse unmarshal (v0.7.0 shape).
+//
+// Pre-v0.7.0 the type was ResponseTimeReport{UUID,Avg,Min,Max} and never
+// populated because the server never returned that shape. The test now
+// pins the actual server shape captured during the v0.7.0 probe.
+func TestMonitorResponseTimeResponse_Unmarshal(t *testing.T) {
+	data := []byte(`{
+		"timeGroups":[{"time":"2026-06-07","avgResponseTime":459,"count":26}],
+		"avgResponseTime":462,
+		"p95ResponseTime":505,
+		"monitors":[{"uuid":"mon_a","name":"X","protocol":"http","avgResponseTime":474,"avgResponseTimeByRegion":{"eu":450,"na":null},"count":25}]
+	}`)
 
-	var result ResponseTimeReport
+	var result MonitorResponseTimeResponse
 	err := json.Unmarshal(data, &result)
 
 	require.NoError(t, err)
-	require.Equal(t, "abc", result.UUID)
-	require.Equal(t, 100.5, result.Avg)
+	require.Equal(t, 462.0, result.AvgResponseTime)
+	require.Equal(t, 505.0, result.P95ResponseTime)
+	require.Len(t, result.TimeGroups, 1)
+	require.Len(t, result.Monitors, 1)
+	require.Equal(t, "mon_a", result.Monitors[0].UUID)
 }
 
 // Test 1.15: NewMcpTransport rejects invalid URL scheme

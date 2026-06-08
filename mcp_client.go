@@ -7,7 +7,34 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 )
+
+// buildWindowArgs assembles the request args common to the windowed MCP
+// tools (get_monitor_mtta, get_monitor_mttr, get_monitor_response_time,
+// get_monitor_uptime). Zero-value from/to are omitted so the server falls
+// back to its declared default window (30 days for these tools at the time
+// of v0.7.0). An empty uuids slice omits monitor_uuids entirely; the server
+// then treats the call as "all monitors in the project". Non-empty uuids
+// are sent as a []string under the key monitor_uuids (NOT the v0.6.x bug
+// shape, which sent a singular "uuid" string).
+//
+// The timestamp format is RFC3339-with-Z (UTC), matching the ISO-8601
+// shape the server's inputSchema documents. Callers always pass
+// time.Time; ISO formatting is handled here.
+func buildWindowArgs(from, to time.Time, uuids []string) map[string]any {
+	args := map[string]any{}
+	if !from.IsZero() {
+		args["from"] = from.UTC().Format(time.RFC3339)
+	}
+	if !to.IsZero() {
+		args["to"] = to.UTC().Format(time.RFC3339)
+	}
+	if len(uuids) > 0 {
+		args["monitor_uuids"] = uuids
+	}
+	return args
+}
 
 // MCPTransport defines the interface for MCP transport
 type MCPTransport interface {
@@ -62,9 +89,19 @@ func (c *MCPClient) GetStatusSummary(ctx context.Context) (*StatusSummary, error
 	return &summary, nil
 }
 
-// GetMonitorResponseTime returns response time metrics for a monitor
-func (c *MCPClient) GetMonitorResponseTime(ctx context.Context, monitorUUID string) (*ResponseTimeReport, error) {
-	result, err := c.transport.CallTool(ctx, "get_monitor_response_time", map[string]any{"uuid": monitorUUID})
+// GetMonitorResponseTime returns response-time metrics over a date window
+// for the supplied monitors. Pass zero-value from/to to let the server use
+// its default window (currently 30 days). Pass no uuids to query every
+// monitor in the project.
+//
+// v0.7.0 BREAKING: the pre-v0.7.0 signature took a single monitorUUID string
+// and sent the wrong arg name to the server (uuid, not monitor_uuids), so
+// every call returned an empty body decoded into a struct of zero values.
+// See CHANGELOG.
+func (c *MCPClient) GetMonitorResponseTime(ctx context.Context, from, to time.Time, uuids ...string) (*MonitorResponseTimeResponse, error) {
+	args := buildWindowArgs(from, to, uuids)
+
+	result, err := c.transport.CallTool(ctx, "get_monitor_response_time", args)
 	if err != nil {
 		return nil, err
 	}
@@ -74,19 +111,22 @@ func (c *MCPClient) GetMonitorResponseTime(ctx context.Context, monitorUUID stri
 		return nil, nil
 	}
 
-	var report ResponseTimeReport
-	if err := marshalUnmarshal(data, &report); err != nil {
+	var resp MonitorResponseTimeResponse
+	if err := marshalUnmarshal(data, &resp); err != nil {
 		return nil, err
 	}
-	return &report, nil
+	return &resp, nil
 }
 
-// GetMonitorMtta returns mean time to acknowledge metrics
-func (c *MCPClient) GetMonitorMtta(ctx context.Context, monitorUUID string) (*MttaReport, error) {
-	args := map[string]any{}
-	if monitorUUID != "" {
-		args["uuid"] = monitorUUID
-	}
+// GetMonitorMtta returns mean-time-to-acknowledge metrics over a date window
+// for the supplied monitors. Pass zero-value from/to to let the server use
+// its default window. Pass no uuids to query every monitor in the project.
+//
+// v0.7.0 BREAKING: see GetMonitorResponseTime godoc for context. The old
+// signature took (ctx, monitorUUID string) and silently decoded into a
+// MttaReport whose fields the server never returned.
+func (c *MCPClient) GetMonitorMtta(ctx context.Context, from, to time.Time, uuids ...string) (*MonitorMttaResponse, error) {
+	args := buildWindowArgs(from, to, uuids)
 
 	result, err := c.transport.CallTool(ctx, "get_monitor_mtta", args)
 	if err != nil {
@@ -98,19 +138,19 @@ func (c *MCPClient) GetMonitorMtta(ctx context.Context, monitorUUID string) (*Mt
 		return nil, nil
 	}
 
-	var report MttaReport
-	if err := marshalUnmarshal(data, &report); err != nil {
+	var resp MonitorMttaResponse
+	if err := marshalUnmarshal(data, &resp); err != nil {
 		return nil, err
 	}
-	return &report, nil
+	return &resp, nil
 }
 
-// GetMonitorMttr returns mean time to resolve metrics
-func (c *MCPClient) GetMonitorMttr(ctx context.Context, monitorUUID string) (*MttrReport, error) {
-	args := map[string]any{}
-	if monitorUUID != "" {
-		args["uuid"] = monitorUUID
-	}
+// GetMonitorMttr returns mean-time-to-resolve metrics over a date window
+// for the supplied monitors.
+//
+// v0.7.0 BREAKING: see GetMonitorMtta godoc for context.
+func (c *MCPClient) GetMonitorMttr(ctx context.Context, from, to time.Time, uuids ...string) (*MonitorMttrResponse, error) {
+	args := buildWindowArgs(from, to, uuids)
 
 	result, err := c.transport.CallTool(ctx, "get_monitor_mttr", args)
 	if err != nil {
@@ -122,11 +162,11 @@ func (c *MCPClient) GetMonitorMttr(ctx context.Context, monitorUUID string) (*Mt
 		return nil, nil
 	}
 
-	var report MttrReport
-	if err := marshalUnmarshal(data, &report); err != nil {
+	var resp MonitorMttrResponse
+	if err := marshalUnmarshal(data, &resp); err != nil {
 		return nil, err
 	}
-	return &report, nil
+	return &resp, nil
 }
 
 // ==================== Observability ====================
@@ -569,12 +609,15 @@ func (c *MCPClient) ResumeMonitor(ctx context.Context, uuid string) error {
 
 // ==================== Uptime ====================
 
-// GetMonitorUptime returns SLA uptime metrics
-func (c *MCPClient) GetMonitorUptime(ctx context.Context, monitorUUID string) (*UptimeReport, error) {
-	args := map[string]any{}
-	if monitorUUID != "" {
-		args["monitor_uuid"] = monitorUUID
-	}
+// GetMonitorUptime returns SLA uptime metrics over a date window for the
+// supplied monitors.
+//
+// v0.7.0 BREAKING: see GetMonitorMtta godoc for context. The pre-v0.7.0
+// signature sent the wrong arg name (monitor_uuid singular, while the
+// server declares monitor_uuids array) and decoded into a UptimeReport
+// whose fields the server never returned.
+func (c *MCPClient) GetMonitorUptime(ctx context.Context, from, to time.Time, uuids ...string) (*MonitorUptimeResponse, error) {
+	args := buildWindowArgs(from, to, uuids)
 
 	result, err := c.transport.CallTool(ctx, "get_monitor_uptime", args)
 	if err != nil {
@@ -586,11 +629,11 @@ func (c *MCPClient) GetMonitorUptime(ctx context.Context, monitorUUID string) (*
 		return nil, nil
 	}
 
-	var report UptimeReport
-	if err := marshalUnmarshal(data, &report); err != nil {
+	var resp MonitorUptimeResponse
+	if err := marshalUnmarshal(data, &resp); err != nil {
 		return nil, err
 	}
-	return &report, nil
+	return &resp, nil
 }
 
 // ==================== Outages ====================
