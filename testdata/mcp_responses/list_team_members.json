@@ -1,0 +1,11 @@
+[
+  {
+    "uuid": "usr_redacted",
+    "email": "example@example.com",
+    "name": "Example User",
+    "phone": "+10000000000",
+    "profilePictureUrl": "https://example.invalid/pic.jpg",
+    "ssoPictureUrl": null,
+    "accountRole": "owner"
+  }
+]

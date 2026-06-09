@@ -33,11 +33,24 @@ package hyperping
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
 
 const integrationEnvVar = "HYPERPING_TEST_API_KEY"
+
+// sharedLiveMCPClient is a package-scoped singleton transport so the
+// whole integration suite shares one MCP session. The Hyperping server
+// rate-limits initialize at 5/min per project; constructing a fresh
+// transport per test case blew that budget once the suite grew past
+// four tests. The McpTransport itself is safe for concurrent use; the
+// sync.Once guards construction without forcing tests to run serially.
+var (
+	sharedClientOnce sync.Once
+	sharedClient     *MCPClient
+	sharedClientErr  error
+)
 
 func liveMCPClient(t *testing.T) *MCPClient {
 	t.Helper()
@@ -45,11 +58,18 @@ func liveMCPClient(t *testing.T) *MCPClient {
 	if key == "" {
 		t.Skipf("integration test skipped: %s not set", integrationEnvVar)
 	}
-	tr, err := NewMcpTransport(key, "")
-	if err != nil {
-		t.Fatalf("NewMcpTransport: %v", err)
+	sharedClientOnce.Do(func() {
+		tr, err := NewMcpTransport(key, "")
+		if err != nil {
+			sharedClientErr = err
+			return
+		}
+		sharedClient = NewMCPClient(tr)
+	})
+	if sharedClientErr != nil {
+		t.Fatalf("NewMcpTransport: %v", sharedClientErr)
 	}
-	return NewMCPClient(tr)
+	return sharedClient
 }
 
 // withTimeout returns a child context with a 30s ceiling so a stuck server
@@ -125,5 +145,95 @@ func TestIntegration_GetMonitorUptime_DecodesLive(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("GetMonitorUptime returned nil response")
+	}
+}
+
+// The following tests cover the six MCPClient methods that pre-v0.7.1
+// passed nil for args. They are the regression guard for the v0.7.1
+// nil-args serialization fix (callToolOnce now sends arguments:{}
+// instead of omitting the key) AND for the response-shape corrections
+// to AlertHistory, TeamMember, and StatusSummary. A red CI here on the
+// next run after a rollback would surface the regression immediately.
+
+func TestIntegration_GetStatusSummary_DecodesLive(t *testing.T) {
+	c := liveMCPClient(t)
+	ctx, cancel := withTimeout(t)
+	defer cancel()
+	resp, err := c.GetStatusSummary(ctx)
+	if err != nil {
+		t.Fatalf("GetStatusSummary failed: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("GetStatusSummary returned nil response")
+	}
+}
+
+func TestIntegration_ListRecentAlerts_DecodesLive(t *testing.T) {
+	c := liveMCPClient(t)
+	ctx, cancel := withTimeout(t)
+	defer cancel()
+	resp, err := c.ListRecentAlerts(ctx)
+	if err != nil {
+		t.Fatalf("ListRecentAlerts failed: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("ListRecentAlerts returned nil response")
+	}
+	// The Total() accessor must be callable without panic on whatever
+	// the live server returned, even for an empty rawAlerts.
+	_ = resp.Total()
+}
+
+func TestIntegration_ListOnCallSchedules_DecodesLive(t *testing.T) {
+	c := liveMCPClient(t)
+	ctx, cancel := withTimeout(t)
+	defer cancel()
+	_, err := c.ListOnCallSchedules(ctx)
+	if err != nil {
+		t.Fatalf("ListOnCallSchedules failed: %v", err)
+	}
+}
+
+func TestIntegration_ListEscalationPolicies_DecodesLive(t *testing.T) {
+	c := liveMCPClient(t)
+	ctx, cancel := withTimeout(t)
+	defer cancel()
+	_, err := c.ListEscalationPolicies(ctx)
+	if err != nil {
+		t.Fatalf("ListEscalationPolicies failed: %v", err)
+	}
+}
+
+func TestIntegration_ListTeamMembers_DecodesLive(t *testing.T) {
+	c := liveMCPClient(t)
+	ctx, cancel := withTimeout(t)
+	defer cancel()
+	members, err := c.ListTeamMembers(ctx)
+	if err != nil {
+		t.Fatalf("ListTeamMembers failed: %v", err)
+	}
+	// Every team has at least one member (the owner that issued the
+	// API key); zero members would imply the server stopped enumerating
+	// the project's roster.
+	if len(members) == 0 {
+		t.Fatal("ListTeamMembers returned empty slice; expected >=1 member")
+	}
+	for i, m := range members {
+		if m.UUID == "" {
+			t.Errorf("members[%d].UUID empty; live server should populate it", i)
+		}
+		if m.AccountRole == "" {
+			t.Errorf("members[%d].AccountRole empty; pre-v0.7.1 Role field was dropped at decode time, so empty here means the v0.7.1 rename did not take effect", i)
+		}
+	}
+}
+
+func TestIntegration_ListIntegrations_DecodesLive(t *testing.T) {
+	c := liveMCPClient(t)
+	ctx, cancel := withTimeout(t)
+	defer cancel()
+	_, err := c.ListIntegrations(ctx)
+	if err != nil {
+		t.Fatalf("ListIntegrations failed: %v", err)
 	}
 }

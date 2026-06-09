@@ -30,7 +30,7 @@ const (
 	// together. Keeping this as a const rather than a `WithVersion()` option
 	// is deliberate: server-side telemetry should observe the actual SDK
 	// version, not a value chosen by the consumer.
-	sdkVersion = "0.7.0"
+	sdkVersion = "0.7.1"
 	// mcpAcceptHeader is required by MCP 2025-03-26 Streamable HTTP: the
 	// server may respond with either application/json or text/event-stream
 	// at its discretion, so clients must accept both even if they only
@@ -492,11 +492,25 @@ func (t *McpTransport) CallTool(ctx context.Context, toolName string, args map[s
 }
 
 func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args map[string]any) (any, error) {
-	params := map[string]any{
-		"name": toolName,
+	// The Hyperping MCP server's tools/call validator rejects requests
+	// whose params.arguments is omitted or null, returning JSON-RPC
+	// -32602 wrapped as content[0].text starting with "MCP error -32602".
+	// That literal-text body then trips json.Unmarshal at the bottom of
+	// this function with "invalid character 'M' looking for beginning
+	// of value", surfacing to callers as "failed to parse MCP tool
+	// response". Six MCPClient methods (GetStatusSummary,
+	// ListRecentAlerts, ListOnCallSchedules, ListEscalationPolicies,
+	// ListTeamMembers, ListIntegrations) pass nil for args because the
+	// tools take no parameters, so the validator hit them on every
+	// call. Normalizing nil to an empty map ensures the marshalled
+	// JSON-RPC request always contains "arguments":{} and the server
+	// accepts the call. Probed against /v1/mcp tools/call on 2026-06-09.
+	if args == nil {
+		args = map[string]any{}
 	}
-	if args != nil {
-		params["arguments"] = args
+	params := map[string]any{
+		"name":      toolName,
+		"arguments": args,
 	}
 
 	req := JSONRPCRequest{

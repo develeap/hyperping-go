@@ -5,10 +5,21 @@ package hyperping
 
 // ==================== Status & Reporting Models ====================
 
+// StatusSummary mirrors the get_status_summary response shape probed
+// against /v1/mcp tools/call on 2026-06-09. The pre-v0.7.1 struct
+// declared only Total/Up/Down; Paused, Unknown, DownMonitors, and
+// PausedMonitors were silently dropped at decode time because the
+// fields did not exist on the Go type. Adding them is a wire-level
+// additive change but counts as a feature surface change against the
+// pre-v0.7.1 SDK because consumers now see them on the response.
 type StatusSummary struct {
-	Total int `json:"total"`
-	Up    int `json:"up"`
-	Down  int `json:"down"`
+	Total           int      `json:"total"`
+	Up              int      `json:"up"`
+	Down            int      `json:"down"`
+	Paused          int      `json:"paused"`
+	Unknown         int      `json:"unknown"`
+	DownMonitors    []string `json:"down_monitors"`
+	PausedMonitors  []string `json:"paused_monitors"`
 }
 
 // ==================== MTTA (windowed) ====================
@@ -114,19 +125,68 @@ type ProbeLog struct {
 }
 
 // ==================== Alert Models ====================
-
+//
+// v0.7.1 BREAKING: replaces the pre-v0.7.1 AlertHistory{Alerts, Total}
+// declaration. The server's list_recent_alerts shape is bucketed counts
+// plus a flat rawAlerts list:
+//
+//   {
+//     "timeGroups": [{"time": "...", "count": N}, ...],
+//     "totalAlerts": N,
+//     "downAlerts": N,
+//     "upAlerts": N,
+//     "rawAlerts": [ ... ]
+//   }
+//
+// The pre-v0.7.1 fields were never populated because the server never
+// returned the keys "alerts" or "total". Probed against
+// /v1/mcp tools/call list_recent_alerts on 2026-06-09 to capture the
+// shape above.
+//
+// Total() is retained as a method so downstream consumers that read the
+// scalar alert count keep compiling, but the underlying source is now
+// the server's TotalAlerts field (zero-valued when rawAlerts is empty).
 type AlertHistory struct {
-	Alerts []Alert `json:"alerts"`
-	Total  int     `json:"total"`
+	TimeGroups  []AlertTimeGroup `json:"timeGroups"`
+	TotalAlerts int              `json:"totalAlerts"`
+	DownAlerts  int              `json:"downAlerts"`
+	UpAlerts    int              `json:"upAlerts"`
+	RawAlerts   []Alert          `json:"rawAlerts"`
 }
 
+// Total reports the aggregate alert count for the response window. It
+// mirrors the server's totalAlerts field rather than summing TimeGroups
+// because the server already does that aggregation and downstream
+// callers should not need to know whether the field exists at the top
+// level or only as a derived sum.
+func (a *AlertHistory) Total() int {
+	if a == nil {
+		return 0
+	}
+	return a.TotalAlerts
+}
+
+// AlertTimeGroup is one bucket of the timeGroups histogram returned by
+// list_recent_alerts. Buckets stay populated even when rawAlerts is
+// empty (e.g., the server returns zero-count buckets for every interval
+// in a long window), so Count==0 buckets are valid data, not absence.
+type AlertTimeGroup struct {
+	Time  string `json:"time"`
+	Count int    `json:"count"`
+}
+
+// Alert is one entry in the AlertHistory.RawAlerts slice. The pre-v0.7.1
+// field tags reflect the historical typing; future probes against
+// non-empty rawAlerts arrays should refine these to match the live
+// shape. omitempty is preserved on fields whose population depends on
+// the alert lifecycle (acknowledged-by, resolved-at).
 type Alert struct {
-	UUID        string `json:"uuid"`
-	MonitorUUID string `json:"monitor_uuid"`
-	Status     string `json:"status"`
-	TriggeredAt string `json:"triggered_at"`
+	UUID           string `json:"uuid"`
+	MonitorUUID    string `json:"monitor_uuid"`
+	Status         string `json:"status"`
+	TriggeredAt    string `json:"triggered_at"`
 	AcknowledgedBy string `json:"acknowledged_by,omitempty"`
-	ResolvedAt string `json:"resolved_at,omitempty"`
+	ResolvedAt     string `json:"resolved_at,omitempty"`
 }
 
 // ==================== On-Call Models ====================
@@ -157,13 +217,23 @@ type EscalationStep struct {
 }
 
 // ==================== Team Models ====================
-
+//
+// v0.7.1 BREAKING: replaces the pre-v0.7.1 TeamMember{Role,Status}
+// declaration. The server returns accountRole (not role), no status
+// field at all, plus phone/profilePictureUrl/ssoPictureUrl that were
+// silently dropped at decode time. SsoPictureUrl is *string because
+// the server returns JSON null for members who never signed in via
+// SSO; differentiating "no SSO photo" from "" lets consumers render
+// a placeholder accurately. Probed against /v1/mcp tools/call
+// list_team_members on 2026-06-09.
 type TeamMember struct {
-	UUID    string `json:"uuid"`
-	Email   string `json:"email"`
-	Name   string `json:"name"`
-	Role   string `json:"role"`
-	Status string `json:"status"`
+	UUID              string  `json:"uuid"`
+	Email             string  `json:"email"`
+	Name              string  `json:"name"`
+	Phone             string  `json:"phone,omitempty"`
+	ProfilePictureURL string  `json:"profilePictureUrl,omitempty"`
+	SsoPictureURL     *string `json:"ssoPictureUrl"`
+	AccountRole       string  `json:"accountRole"`
 }
 
 // ==================== Integration Models ====================
