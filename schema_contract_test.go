@@ -173,3 +173,137 @@ func TestSchemaContract_NoNetworkInUnitTests(t *testing.T) {
 	_ = ctx
 	loadToolsListSnapshot(t)
 }
+
+// ==================== Output-shape pinning ====================
+//
+// v0.7.0 caught REQUEST-side drift (the client sending a key the server
+// did not declare) but missed RESPONSE-side shape lies. The
+// list_recent_alerts bug (AlertHistory{Alerts,Total} vs the server's
+// {timeGroups,totalAlerts,downAlerts,upAlerts,rawAlerts}) decoded to
+// all-zero values silently because Go's encoding/json ignores unknown
+// fields by default and DisallowUnknownFields is not enabled on the
+// MCPClient decode path. The fixtures below were captured live on
+// 2026-06-09 against /v1/mcp tools/call. Each tool's wrapper method is
+// invoked through a stubbed transport whose result IS the fixture,
+// asserting the resulting typed struct round-trips back to the fixture
+// JSON without losing fields. A regression to a leaner struct will
+// surface as a "fixture has key X that the Go type does not preserve"
+// failure.
+
+type outputShapeCase struct {
+	tool    string
+	fixture string
+	// run invokes the corresponding MCPClient method against a stub
+	// transport whose result is the parsed fixture, and returns the
+	// decoded-then-remarshalled JSON. The roundtrip is what catches a
+	// regression like AlertHistory{Alerts,Total} eating timeGroups.
+	run func(t *testing.T, raw any) []byte
+}
+
+// loadFixture reads testdata/mcp_responses/<tool>.json and parses it.
+// The MCPClient decode path receives content[0].text already json-
+// decoded into native types (map[string]any or []any), which is what
+// loadFixture returns.
+func loadFixture(t *testing.T, tool string) any {
+	t.Helper()
+	path := filepath.Join("testdata", "mcp_responses", tool+".json")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err, "missing fixture %s", path)
+	var parsed any
+	require.NoError(t, json.Unmarshal(data, &parsed))
+	return parsed
+}
+
+// outputShapeStubTransport replays a fixed result for one CallTool call
+// regardless of toolName or args. Reused per-case so the test isolates
+// the decode-path behavior from transport behavior.
+type outputShapeStubTransport struct {
+	result any
+}
+
+func (s *outputShapeStubTransport) Initialize(_ context.Context) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
+func (s *outputShapeStubTransport) CallTool(_ context.Context, _ string, _ map[string]any) (any, error) {
+	return s.result, nil
+}
+
+func outputShapeCases() []outputShapeCase {
+	return []outputShapeCase{
+		{
+			tool:    "get_status_summary",
+			fixture: "get_status_summary",
+			run: func(t *testing.T, raw any) []byte {
+				c := NewMCPClient(&outputShapeStubTransport{result: raw})
+				got, err := c.GetStatusSummary(context.Background())
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				out, err := json.Marshal(got)
+				require.NoError(t, err)
+				return out
+			},
+		},
+		{
+			tool:    "list_recent_alerts",
+			fixture: "list_recent_alerts",
+			run: func(t *testing.T, raw any) []byte {
+				c := NewMCPClient(&outputShapeStubTransport{result: raw})
+				got, err := c.ListRecentAlerts(context.Background())
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				out, err := json.Marshal(got)
+				require.NoError(t, err)
+				return out
+			},
+		},
+	}
+}
+
+// TestSchemaContract_OutputShape_PinsLiveServerFields asserts that for
+// each pinned tool, every key in the live response fixture survives the
+// round-trip through the corresponding MCPClient method's typed Go
+// struct. If a Go field is missing or its JSON tag drifts, the
+// remarshalled JSON will lack that key and the assertion fails with a
+// pointer to the offending field name.
+//
+// Scope: pinned to the affected-by-v0.7.1 nil-args methods whose Go
+// types CHANGED in this release (StatusSummary, AlertHistory). Methods
+// whose types stayed unchanged but whose request fix landed in v0.7.1
+// (ListOnCallSchedules, ListEscalationPolicies, ListIntegrations,
+// ListTeamMembers) are exercised by the integration suite plus the
+// dedicated unmarshal unit tests; pinning them here would be redundant
+// AND would force a fixture update every time the live server adds a
+// new top-level field to one of those tools.
+func TestSchemaContract_OutputShape_PinsLiveServerFields(t *testing.T) {
+	for _, tc := range outputShapeCases() {
+		t.Run(tc.tool, func(t *testing.T) {
+			raw := loadFixture(t, tc.fixture)
+			out := tc.run(t, raw)
+			// Parse both sides into map[string]any so the comparison is
+			// key-by-key. The Go marshal output may not be byte-equal to
+			// the fixture (field ordering, whitespace), but every
+			// top-level key in the fixture MUST be present in the
+			// remarshalled output.
+			fixtureMap, ok := raw.(map[string]any)
+			if !ok {
+				// list_team_members and list_escalation_policies are
+				// top-level arrays; the helper above only registers map
+				// shapes, so this branch is unreachable for the current
+				// case set. Keep the guard so future array-shape
+				// additions fail loudly here rather than silently
+				// passing.
+				t.Fatalf("output-shape pin only supports map fixtures; %s is %T", tc.tool, raw)
+			}
+			var outMap map[string]any
+			require.NoError(t, json.Unmarshal(out, &outMap),
+				"remarshalled output is not a JSON object: %s", string(out))
+			for key := range fixtureMap {
+				_, present := outMap[key]
+				require.True(t, present,
+					"tool %q: live response key %q dropped at decode; the Go type is missing a field with that JSON tag",
+					tc.tool, key)
+			}
+		})
+	}
+}

@@ -404,6 +404,109 @@ func TestStatusSummary_NullFields(t *testing.T) {
 // Pre-v0.7.0 the type was ResponseTimeReport{UUID,Avg,Min,Max} and never
 // populated because the server never returned that shape. The test now
 // pins the actual server shape captured during the v0.7.0 probe.
+// Test 3.2a: StatusSummary unmarshal, extended shape (v0.7.1).
+//
+// The pre-v0.7.1 type declared only total/up/down. The live server
+// also returns paused, unknown, down_monitors, and paused_monitors;
+// they were silently dropped at decode time. This test pins the new
+// fields against the live response shape captured on 2026-06-09.
+func TestStatusSummary_Unmarshal_ExtendedShape(t *testing.T) {
+	data := []byte(`{
+		"total":3,
+		"up":2,
+		"down":1,
+		"paused":0,
+		"unknown":0,
+		"down_monitors":["mon_a"],
+		"paused_monitors":[]
+	}`)
+
+	var result StatusSummary
+	require.NoError(t, json.Unmarshal(data, &result))
+	require.Equal(t, 3, result.Total)
+	require.Equal(t, 2, result.Up)
+	require.Equal(t, 1, result.Down)
+	require.Equal(t, 0, result.Paused)
+	require.Equal(t, 0, result.Unknown)
+	require.Equal(t, []string{"mon_a"}, result.DownMonitors)
+	require.Equal(t, []string{}, result.PausedMonitors)
+}
+
+// Test 3.2b: TeamMember unmarshal, v0.7.1 shape.
+//
+// Pre-v0.7.1 the type declared Role and Status, neither of which the
+// server returns. AccountRole is the correct field; Phone /
+// ProfilePictureURL / SsoPictureURL were also dropped at decode time.
+// SsoPictureURL is *string so the JSON null returned for non-SSO
+// members decodes as nil pointer, distinct from "".
+func TestTeamMember_Unmarshal(t *testing.T) {
+	data := []byte(`{
+		"uuid":"usr_a",
+		"email":"a@example.com",
+		"name":"Alice",
+		"phone":"+10000000000",
+		"profilePictureUrl":"https://example.invalid/pic.jpg",
+		"ssoPictureUrl":null,
+		"accountRole":"owner"
+	}`)
+
+	var result TeamMember
+	require.NoError(t, json.Unmarshal(data, &result))
+	require.Equal(t, "usr_a", result.UUID)
+	require.Equal(t, "a@example.com", result.Email)
+	require.Equal(t, "Alice", result.Name)
+	require.Equal(t, "+10000000000", result.Phone)
+	require.Equal(t, "https://example.invalid/pic.jpg", result.ProfilePictureURL)
+	require.Nil(t, result.SsoPictureURL,
+		"ssoPictureUrl JSON null must decode as nil *string, not empty string")
+	require.Equal(t, "owner", result.AccountRole)
+}
+
+// Test 3.3a: AlertHistory unmarshal (v0.7.1 shape).
+//
+// Pre-v0.7.1 the type was {Alerts []Alert, Total int} and never
+// populated because the server never returned those keys. The new
+// shape mirrors the live server's list_recent_alerts response.
+func TestAlertHistory_Unmarshal(t *testing.T) {
+	data := []byte(`{
+		"timeGroups":[{"time":"2026-06-08T00:00:00Z","count":2},{"time":"2026-06-09T00:00:00Z","count":0}],
+		"totalAlerts":2,
+		"downAlerts":1,
+		"upAlerts":1,
+		"rawAlerts":[{"uuid":"alt_a","monitor_uuid":"mon_a","status":"down","triggered_at":"2026-06-08T01:02:03Z"}]
+	}`)
+
+	var result AlertHistory
+	require.NoError(t, json.Unmarshal(data, &result))
+	require.Len(t, result.TimeGroups, 2)
+	require.Equal(t, "2026-06-08T00:00:00Z", result.TimeGroups[0].Time)
+	require.Equal(t, 2, result.TimeGroups[0].Count)
+	require.Equal(t, 0, result.TimeGroups[1].Count)
+	require.Equal(t, 2, result.TotalAlerts)
+	require.Equal(t, 1, result.DownAlerts)
+	require.Equal(t, 1, result.UpAlerts)
+	require.Len(t, result.RawAlerts, 1)
+	require.Equal(t, "alt_a", result.RawAlerts[0].UUID)
+
+	// Total() accessor must report the server's TotalAlerts, not a sum
+	// of TimeGroups (which would over-count if both fields are present).
+	require.Equal(t, 2, result.Total())
+}
+
+// Test 3.3b: AlertHistory.Total on empty / nil receivers.
+//
+// The accessor should be safe to call on a zero-value or nil pointer
+// so consumers that always emit the metric (e.g., a Prometheus gauge
+// for total_alerts) do not panic when the upstream call returned
+// nothing.
+func TestAlertHistory_Total_NilSafe(t *testing.T) {
+	var nilHistory *AlertHistory
+	require.Equal(t, 0, nilHistory.Total())
+
+	empty := AlertHistory{}
+	require.Equal(t, 0, empty.Total())
+}
+
 func TestMonitorResponseTimeResponse_Unmarshal(t *testing.T) {
 	data := []byte(`{
 		"timeGroups":[{"time":"2026-06-07","avgResponseTime":459,"count":26}],
@@ -427,6 +530,86 @@ func TestMonitorResponseTimeResponse_Unmarshal(t *testing.T) {
 func TestNewMcpTransport_InvalidURL(t *testing.T) {
 	_, err := NewMcpTransport("key", "ftp://example.com")
 	require.Error(t, err, "non-HTTPS non-localhost URL should be rejected")
+}
+
+// Test 1.16: CallTool with nil args still serializes arguments:{} in the
+// JSON-RPC request body.
+//
+// Regression guard for the v0.7.0 bug where callToolOnce omitted the
+// arguments key entirely when callers passed nil. The Hyperping MCP
+// server's input validator returned -32602 for the malformed request,
+// which surfaced as "failed to parse MCP tool response" because the
+// error text "MCP error -32602: ..." then failed json.Unmarshal at the
+// content[0].text decode step. Six MCPClient methods (the no-arg list/
+// get tools) were broken because of this.
+func TestMCPTransport_CallTool_NilArgs_SerializesEmptyArgumentsObject(t *testing.T) {
+	var capturedBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		// Classify by method so we only pin the tools/call body, not the
+		// initialize body which has its own arguments-less shape.
+		var probe struct {
+			Method string `json:"method"`
+		}
+		_ = json.Unmarshal(body, &probe)
+		if probe.Method == "tools/call" {
+			capturedBody = string(body)
+		}
+		_ = json.NewEncoder(w).Encode(mockStatusSummaryResponse)
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+	_, err = transport.CallTool(context.Background(), "list_recent_alerts", nil)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, capturedBody, "tools/call body was not captured")
+	require.Contains(t, capturedBody, `"arguments":{}`,
+		"nil args must serialize as arguments:{}, got body=%s", capturedBody)
+
+	// Belt-and-suspenders: re-decode and assert the params.arguments key
+	// is present AND non-nil. Catches a regression where someone "fixes"
+	// the string match by sending "arguments":null (still rejected by
+	// the live server).
+	var req JSONRPCRequest
+	require.NoError(t, json.Unmarshal([]byte(capturedBody), &req))
+	args, ok := req.Params["arguments"]
+	require.True(t, ok, "params.arguments key must be present in the request")
+	require.NotNil(t, args, "params.arguments must not be null")
+}
+
+// Test 1.17: CallTool with non-nil args still forwards them unchanged.
+//
+// Belt for Test 1.16: makes sure the nil-normalization path does not
+// accidentally trample caller-supplied args (e.g., by allocating a
+// fresh empty map even when args was already populated).
+func TestMCPTransport_CallTool_NonNilArgs_PreservedInRequest(t *testing.T) {
+	var capturedBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		var probe struct {
+			Method string `json:"method"`
+		}
+		_ = json.Unmarshal(body, &probe)
+		if probe.Method == "tools/call" {
+			capturedBody = string(body)
+		}
+		_ = json.NewEncoder(w).Encode(mockStatusSummaryResponse)
+	}))
+	defer server.Close()
+
+	transport, err := NewMcpTransport("test-key", server.URL)
+	require.NoError(t, err)
+	_, err = transport.CallTool(context.Background(), "get_monitor",
+		map[string]any{"uuid": "mon_abc"})
+	require.NoError(t, err)
+
+	require.NotEmpty(t, capturedBody)
+	require.Contains(t, capturedBody, `"arguments":{"uuid":"mon_abc"}`,
+		"non-nil args must be forwarded verbatim, got body=%s", capturedBody)
 }
 
 // ==================== Phase 4: Session-ID Tests ====================

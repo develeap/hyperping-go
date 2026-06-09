@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-09
+
+### Fixed
+
+- **MCP tools/call with nil args produced a malformed JSON-RPC request
+  (CRITICAL).** `McpTransport.callToolOnce` omitted `params.arguments`
+  entirely when the caller passed `nil`. The Hyperping MCP server's
+  input validator rejected such requests with JSON-RPC `-32602
+  Input validation` and returned the error as `content[0].text`
+  starting with the literal string `MCP error -32602: ...`. That
+  literal-text body then failed `json.Unmarshal` further down the
+  decode path, surfacing to callers as
+  `failed to parse MCP tool response: invalid character 'M' looking
+  for beginning of value`. The fix normalizes nil args to
+  `map[string]any{}` before serialization so the marshalled request
+  always contains `"arguments":{}`. Probed against
+  `https://api.hyperping.io/v1/mcp` on 2026-06-09 (sending `arguments:
+  omitted` reproduced the failure; sending `arguments: {}` produced a
+  valid response). The six affected `MCPClient` methods are:
+  `GetStatusSummary`, `ListRecentAlerts`, `ListOnCallSchedules`,
+  `ListEscalationPolicies`, `ListTeamMembers`, `ListIntegrations`.
+- **`AlertHistory` decoded all-zero values silently (CRITICAL).** Even
+  with the nil-args fix above, `ListRecentAlerts` populated all
+  zero-value fields because the v0.7.0 `AlertHistory{Alerts, Total}`
+  declaration did not match the server's actual response shape. The
+  server returns `{timeGroups[], totalAlerts, downAlerts, upAlerts,
+  rawAlerts[]}`. Downstream consumers reading
+  `hyperping_total_alerts` got 0 fleet-wide regardless of true alert
+  activity.
+- **`TeamMember` dropped four live-server fields at decode time.**
+  The v0.7.0 type declared `Role` and `Status`; the server returns
+  `accountRole` (no `role`), no `status` at all, plus `phone`,
+  `profilePictureUrl`, and `ssoPictureUrl`. Every previous decode
+  produced an empty `Role` and `Status`.
+- **`StatusSummary` dropped four live-server fields at decode time.**
+  The v0.7.0 type declared `total/up/down`; the server also returns
+  `paused`, `unknown`, `down_monitors[]`, and `paused_monitors[]`.
+  Adding them does not invalidate existing fields, but consumers who
+  needed the per-state breakdown were getting nothing.
+
+### Changed (BREAKING)
+
+- `AlertHistory` shape replaced:
+  - Old: `{Alerts []Alert, Total int}` (neither key returned by server).
+  - New: `{TimeGroups []AlertTimeGroup, TotalAlerts int, DownAlerts int,
+    UpAlerts int, RawAlerts []Alert}` with a `Total() int` accessor that
+    returns `TotalAlerts` for nil-safe migration of callers that used
+    the old `.Total` field. Consumers that read `.Alerts` must migrate
+    to `.RawAlerts`; the rename is intentional because the server's
+    payload is a flat list, not a paginated alert page.
+- `TeamMember` shape replaced:
+  - Old: `{UUID, Email, Name, Role, Status}`.
+  - New: `{UUID, Email, Name, Phone, ProfilePictureURL, SsoPictureURL,
+    AccountRole}`. `Role` is renamed to `AccountRole` (matches the
+    server field). `Status` is removed because the server never
+    returned it. `SsoPictureURL` is `*string` so the JSON `null`
+    returned for members who never signed in via SSO decodes as nil
+    pointer, distinct from `""`.
+- `StatusSummary` extended with `Paused int`, `Unknown int`,
+  `DownMonitors []string`, `PausedMonitors []string`. Existing
+  `Total/Up/Down` semantics are unchanged.
+- SDK `clientInfo.version` reported during MCP initialize bumped from
+  `0.7.0` to `0.7.1`.
+
+### Added
+
+- **Output-shape pinning in the schema-contract test.**
+  `testdata/mcp_responses/*.json` snapshots the live `content[0].text`
+  payload of every affected nil-args tool captured during this
+  release. `schema_contract_test.go` round-trips each fixture through
+  the corresponding `MCPClient` method's typed struct and asserts
+  every top-level key in the fixture survives the decode. v0.7.0
+  pinned only INPUT schemas; this catches RESPONSE-shape regressions
+  that previously decoded silently to zero values.
+- **Live integration tests for the six nil-args methods.**
+  `integration_test.go` adds decode-success assertions for
+  `GetStatusSummary`, `ListRecentAlerts`, `ListOnCallSchedules`,
+  `ListEscalationPolicies`, `ListTeamMembers`, `ListIntegrations`.
+  The integration suite now shares one MCP session across all
+  tests (single `McpTransport` singleton) so the server's
+  `initialize 5/min` rate-limit does not throttle a growing
+  test surface.
+- Unit-test pins for the new `AlertHistory`, `TeamMember`, and
+  `StatusSummary` decode shapes, plus a regression test asserting
+  `CallTool` with `nil` args produces a JSON-RPC body containing
+  `"arguments":{}` and never `null` or absent.
+
 ## [0.7.0] - 2026-06-08
 
 ### Fixed
