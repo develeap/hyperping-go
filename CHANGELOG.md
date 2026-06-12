@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **OpenTelemetry tracing on every API call (GO-10).** `NewClient` now accepts
+  `WithTracerProvider(tp trace.TracerProvider)` and `NewMcpTransport` accepts
+  `WithMCPTracerProvider(tp trace.TracerProvider)`. When set, each HTTP attempt
+  (REST) and each `tools/call` invocation (MCP) is wrapped in an OpenTelemetry
+  client span. Span attributes emitted: `hyperping.method`, `hyperping.endpoint`,
+  `http.status_code`, and `hyperping.request_id` (from the `X-Request-Id` response
+  header, when present). Default behavior is unchanged: consumers that do not
+  call `WithTracerProvider` / `WithMCPTracerProvider` incur zero overhead and
+  pull no OTel SDK dependency.
+
 ## [0.7.1] - 2026-06-09
 
 ### Fixed
