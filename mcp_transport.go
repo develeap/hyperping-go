@@ -15,6 +15,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -96,6 +99,7 @@ type McpTransport struct {
 	// session id continue to work unchanged). Written only under initMu;
 	// read lock-free in callToolOnce.
 	sessionID atomic.Pointer[string]
+	tracerProvider trace.TracerProvider
 }
 
 // loadSessionID returns the live session id by VALUE, not pointer. The
@@ -141,6 +145,15 @@ func WithMCPMaxRetries(n int) TransportOption {
 func WithMCPHTTPClient(h *http.Client) TransportOption {
 	return func(t *McpTransport) {
 		t.client = h
+	}
+}
+
+// WithMCPTracerProvider sets an OpenTelemetry TracerProvider for MCP tools/call tracing.
+// Each CallTool invocation is wrapped in a client span with hyperping.method and
+// hyperping.endpoint attributes. Omitting this option disables tracing with no overhead.
+func WithMCPTracerProvider(tp trace.TracerProvider) TransportOption {
+	return func(t *McpTransport) {
+		t.tracerProvider = tp
 	}
 }
 
@@ -508,6 +521,20 @@ func (t *McpTransport) callToolOnce(ctx context.Context, toolName string, args m
 	if args == nil {
 		args = map[string]any{}
 	}
+
+	var span trace.Span
+	if t.tracerProvider != nil {
+		_, span = t.tracerProvider.Tracer("hyperping").Start(ctx,
+			"hyperping.tools/call "+toolName,
+			trace.WithSpanKind(trace.SpanKindClient),
+			trace.WithAttributes(
+				attribute.String("hyperping.method", "tools/call"),
+				attribute.String("hyperping.endpoint", toolName),
+			),
+		)
+		defer span.End()
+	}
+
 	params := map[string]any{
 		"name":      toolName,
 		"arguments": args,

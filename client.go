@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/sony/gobreaker"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -93,6 +95,7 @@ type Client struct {
 	circuitBreaker         *gobreaker.CircuitBreaker
 	circuitBreakerSettings *gobreaker.Settings
 	disableCircuitBreaker  bool
+	tracerProvider         trace.TracerProvider
 }
 
 // Option is a functional option for configuring the Client.
@@ -289,6 +292,16 @@ func WithCircuitBreakerSettings(settings gobreaker.Settings) Option {
 	return func(c *Client) {
 		s := settings // copy by value to prevent post-construction mutation via caller's variable
 		c.circuitBreakerSettings = &s
+	}
+}
+
+// WithTracerProvider sets an OpenTelemetry TracerProvider for distributed tracing.
+// Each HTTP attempt is wrapped in a span with hyperping.method, hyperping.endpoint,
+// http.status_code, and hyperping.request_id attributes. Omitting this option
+// disables tracing entirely with no performance overhead.
+func WithTracerProvider(tp trace.TracerProvider) Option {
+	return func(c *Client) {
+		c.tracerProvider = tp
 	}
 }
 
@@ -578,6 +591,18 @@ func (c *Client) doRequestWithRetry(ctx context.Context, method, path string, bo
 			"body_length": len(jsonBody),
 		})
 
+		var span trace.Span
+		if c.tracerProvider != nil {
+			_, span = c.tracerProvider.Tracer("hyperping").Start(ctx,
+				"hyperping."+method+" "+path,
+				trace.WithSpanKind(trace.SpanKindClient),
+				trace.WithAttributes(
+					attribute.String("hyperping.method", method),
+					attribute.String("hyperping.endpoint", path),
+				),
+			)
+		}
+
 		startTime := time.Now()
 		resp, err := c.httpClient.Do(req) //nolint:gosec // G107: baseURL is validated by validateBaseURL (HTTPS or localhost-only), not user-tainted
 		duration := time.Since(startTime)
@@ -593,11 +618,22 @@ func (c *Client) doRequestWithRetry(ctx context.Context, method, path string, bo
 				"attempt":     attempt + 1,
 				"duration_ms": duration.Milliseconds(),
 			})
+			if span != nil {
+				span.End()
+			}
 			lastErr = fmt.Errorf("request failed: %w", err)
 			if c.shouldRetryOnError(ctx, method, path, attempt) {
 				continue
 			}
 			return lastErr
+		}
+
+		if span != nil {
+			span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+			if reqID := resp.Header.Get("X-Request-Id"); reqID != "" {
+				span.SetAttributes(attribute.String("hyperping.request_id", reqID))
+			}
+			span.End()
 		}
 
 		ar := c.processHTTPResponse(ctx, method, path, resp, duration, attempt, result)
