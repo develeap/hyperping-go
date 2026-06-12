@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Model types are now generated from `openapi.yaml` via oapi-codegen (GO-08).
+  `models_gen.go` is the authoritative source for struct definitions; the
+  hand-authored `models_*.go` stubs retain only custom logic and types that
+  fall outside the spec scope. Run `go generate ./...` to regenerate after
+  editing `openapi.yaml`.
+- CI job `generate-check` fails if `models_gen.go` is stale relative to
+  `openapi.yaml`, preventing silent drift going forward.
+- Schema drift tests (`schema_drift_test.go`) verify every spec property has a
+  matching JSON tag in its Go type, closing the drift path that allowed the
+  v0.6.x silent-zero MTTA bug class.
+
+### Breaking
+
+- Several optional request-body fields changed from bare value types to pointer
+  types with `omitempty`. Callers constructing `CreateMonitorRequest`,
+  `UpdateMonitorRequest`, and similar write-side structs may need pointer
+  wrappers (`&val`) for fields that were previously bare: `FollowRedirects`,
+  `RequiredKeyword`, and DNS-related fields.
+- `CreateStatusPageService.Description` changed from `interface{}` to `*string`.
+  Callers that previously set `Description` to a `map[string]string` for nested
+  service descriptions should use the `Name` field instead.
+
 ## [0.7.1] - 2026-06-09
 
 ### Fixed
