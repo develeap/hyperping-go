@@ -93,6 +93,7 @@ type Client struct {
 	circuitBreaker         *gobreaker.CircuitBreaker
 	circuitBreakerSettings *gobreaker.Settings
 	disableCircuitBreaker  bool
+	debugStats             *DebugStats
 }
 
 // Option is a functional option for configuring the Client.
@@ -148,7 +149,15 @@ func NewClient(apiKey string, opts ...Option) *Client {
 // those settings are used directly; otherwise the default settings apply.
 func newCircuitBreaker(c *Client) *gobreaker.CircuitBreaker {
 	if c.circuitBreakerSettings != nil {
-		return gobreaker.NewCircuitBreaker(*c.circuitBreakerSettings)
+		s := *c.circuitBreakerSettings
+		userOnStateChange := s.OnStateChange
+		s.OnStateChange = func(name string, from, to gobreaker.State) {
+			if userOnStateChange != nil {
+				userOnStateChange(name, from, to)
+			}
+			c.debugStats.setCBState(to.String())
+		}
+		return gobreaker.NewCircuitBreaker(s)
 	}
 	return gobreaker.NewCircuitBreaker(gobreaker.Settings{
 		Name:        "hyperping-api",
@@ -188,6 +197,7 @@ func newCircuitBreaker(c *Client) *gobreaker.CircuitBreaker {
 			if c.metrics != nil {
 				c.metrics.RecordCircuitBreakerState(ctx, to.String())
 			}
+			c.debugStats.setCBState(to.String())
 		},
 	})
 }
@@ -388,15 +398,40 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body, resul
 	if c.setupErr != nil {
 		return c.setupErr
 	}
+	c.debugStats.recordStart()
+	defer c.debugStats.recordEnd()
 	// Wrap request in circuit breaker to prevent cascading failures.
 	// If circuit breaker is nil (disabled via WithNoCircuitBreaker), execute directly.
+	var err error
 	if c.circuitBreaker != nil {
-		_, err := c.circuitBreaker.Execute(func() (interface{}, error) {
+		_, err = c.circuitBreaker.Execute(func() (interface{}, error) {
 			return nil, c.doRequestWithRetry(ctx, method, path, body, result)
 		})
-		return err
+	} else {
+		err = c.doRequestWithRetry(ctx, method, path, body, result)
 	}
-	return c.doRequestWithRetry(ctx, method, path, body, result)
+	c.classifyAndRecordError(err)
+	return err
+}
+
+// classifyAndRecordError increments the appropriate error counter in debugStats.
+func (c *Client) classifyAndRecordError(err error) {
+	if err == nil || c.debugStats == nil {
+		return
+	}
+	var apiErr *APIError
+	switch {
+	case errors.Is(err, gobreaker.ErrOpenState), errors.Is(err, gobreaker.ErrTooManyRequests):
+		c.debugStats.incError("circuit_open")
+	case errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests:
+		c.debugStats.incError("rate_limit")
+	case errors.As(err, &apiErr) && apiErr.StatusCode >= 500:
+		c.debugStats.incError("server_error")
+	case errors.As(err, &apiErr):
+		c.debugStats.incError("client_error")
+	default:
+		c.debugStats.incError("transport")
+	}
 }
 
 // buildHTTPRequest constructs an HTTP request with all required headers set.
@@ -566,6 +601,9 @@ func (c *Client) doRequestWithRetry(ctx context.Context, method, path string, bo
 
 	var lastErr error
 	for attempt := 0; attempt <= effectiveMaxRetries; attempt++ {
+		if attempt > 0 {
+			c.debugStats.recordRetry(attempt)
+		}
 		req, err := c.buildHTTPRequest(ctx, method, path, jsonBody)
 		if err != nil {
 			return err
