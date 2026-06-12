@@ -15,6 +15,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -95,7 +98,8 @@ type McpTransport struct {
 	// transport then omits the header entirely (servers that do not issue a
 	// session id continue to work unchanged). Written only under initMu;
 	// read lock-free in callToolOnce.
-	sessionID atomic.Pointer[string]
+	sessionID      atomic.Pointer[string]
+	tracerProvider trace.TracerProvider
 }
 
 // loadSessionID returns the live session id by VALUE, not pointer. The
@@ -438,6 +442,18 @@ func (t *McpTransport) ensureInitialized(ctx context.Context) error {
 // ==================== CallTool ====================
 
 func (t *McpTransport) CallTool(ctx context.Context, toolName string, args map[string]any) (any, error) {
+	if t.tracerProvider != nil {
+		var span trace.Span
+		ctx, span = t.tracerProvider.Tracer("hyperping-go").Start(ctx,
+			"hyperping.tools/call "+toolName,
+			trace.WithSpanKind(trace.SpanKindClient),
+			trace.WithAttributes(
+				attribute.String("hyperping.method", "tools/call"),
+				attribute.String("hyperping.endpoint", toolName),
+			),
+		)
+		defer span.End()
+	}
 	var lastErr error
 	var sessionRecoveryAttempted bool
 	maxRetries := t.maxRetries

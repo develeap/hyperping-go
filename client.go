@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/sony/gobreaker"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -93,6 +95,7 @@ type Client struct {
 	circuitBreaker         *gobreaker.CircuitBreaker
 	circuitBreakerSettings *gobreaker.Settings
 	disableCircuitBreaker  bool
+	tracerProvider         trace.TracerProvider
 }
 
 // Option is a functional option for configuring the Client.
@@ -388,6 +391,18 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body, resul
 	if c.setupErr != nil {
 		return c.setupErr
 	}
+	if c.tracerProvider != nil {
+		var span trace.Span
+		ctx, span = c.tracerProvider.Tracer("hyperping-go").Start(ctx,
+			fmt.Sprintf("hyperping.%s %s", method, path),
+			trace.WithSpanKind(trace.SpanKindClient),
+			trace.WithAttributes(
+				attribute.String("hyperping.method", method),
+				attribute.String("hyperping.endpoint", path),
+			),
+		)
+		defer span.End()
+	}
 	// Wrap request in circuit breaker to prevent cascading failures.
 	// If circuit breaker is nil (disabled via WithNoCircuitBreaker), execute directly.
 	if c.circuitBreaker != nil {
@@ -478,6 +493,7 @@ func (c *Client) processHTTPResponse(
 	if err != nil {
 		return attemptResult{err: err}
 	}
+	recordResponseOnSpan(ctx, resp)
 
 	c.logDebug(ctx, "received API response", map[string]interface{}{
 		"method":      method,
