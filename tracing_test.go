@@ -1,3 +1,5 @@
+//go:build ignore
+
 // Copyright (c) 2026 Develeap
 // SPDX-License-Identifier: MIT
 

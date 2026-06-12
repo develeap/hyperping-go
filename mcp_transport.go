@@ -95,7 +95,8 @@ type McpTransport struct {
 	// transport then omits the header entirely (servers that do not issue a
 	// session id continue to work unchanged). Written only under initMu;
 	// read lock-free in callToolOnce.
-	sessionID atomic.Pointer[string]
+	sessionID  atomic.Pointer[string]
+	debugStats *DebugStats
 }
 
 // loadSessionID returns the live session id by VALUE, not pointer. The
@@ -141,6 +142,15 @@ func WithMCPMaxRetries(n int) TransportOption {
 func WithMCPHTTPClient(h *http.Client) TransportOption {
 	return func(t *McpTransport) {
 		t.client = h
+	}
+}
+
+// WithTransportStats attaches a DebugStats (obtained from (*Client).Stats()) to
+// the transport so MCP session-id refresh counts appear on the client's /debug/vars
+// endpoint. Pass nil to disable.
+func WithTransportStats(s *DebugStats) TransportOption {
+	return func(t *McpTransport) {
+		t.debugStats = s
 	}
 }
 
@@ -472,6 +482,7 @@ func (t *McpTransport) CallTool(ctx context.Context, toolName string, args map[s
 		// most one recovery attempt per CallTool to avoid infinite loops.
 		if errors.Is(err, ErrSessionLost) && !sessionRecoveryAttempted {
 			sessionRecoveryAttempted = true
+			t.debugStats.incMCPRefreshes()
 			continue
 		}
 
