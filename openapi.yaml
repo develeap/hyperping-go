@@ -173,9 +173,11 @@ components:
         request_body:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         follow_redirects:
           type: boolean
           nullable: true
+          x-go-type-skip-optional-pointer: false
         expected_status_code:
           type: string
         required_keyword:
@@ -195,12 +197,15 @@ components:
         dns_record_type:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         dns_nameserver:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         dns_expected_answer:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
 
     UpdateMonitorRequest:
       type: object
@@ -209,64 +214,83 @@ components:
         name:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         url:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         protocol:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         projectUuid:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         http_method:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         check_frequency:
           type: integer
           nullable: true
+          x-go-type-skip-optional-pointer: false
         regions:
           type: array
           items:
             type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         request_headers:
           type: array
           items:
             $ref: '#/components/schemas/RequestHeader'
           nullable: true
+          x-go-type-skip-optional-pointer: false
         request_body:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         follow_redirects:
           type: boolean
           nullable: true
+          x-go-type-skip-optional-pointer: false
         expected_status_code:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         required_keyword:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         paused:
           type: boolean
           nullable: true
+          x-go-type-skip-optional-pointer: false
         port:
           type: integer
           nullable: true
+          x-go-type-skip-optional-pointer: false
         alerts_wait:
           type: integer
           nullable: true
+          x-go-type-skip-optional-pointer: false
         escalation_policy:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         dns_record_type:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         dns_nameserver:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         dns_expected_answer:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
 
     # -------------------------------------------------------------------------
     # Incident
@@ -315,6 +339,7 @@ components:
           items:
             type: string
         statuspages:
+          x-go-name: StatusPages
           type: array
           items:
             type: string
@@ -358,6 +383,7 @@ components:
           items:
             type: string
         statuspages:
+          x-go-name: StatusPages
           type: array
           items:
             type: string
@@ -375,22 +401,28 @@ components:
         title:
           $ref: '#/components/schemas/LocalizedText'
           nullable: true
+          x-go-type-skip-optional-pointer: false
         text:
           $ref: '#/components/schemas/LocalizedText'
           nullable: true
+          x-go-type-skip-optional-pointer: false
         type:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         affectedComponents:
           type: array
           items:
             type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         statuspages:
+          x-go-name: StatusPages
           type: array
           items:
             type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         updates:
           type: array
           items:
@@ -431,9 +463,11 @@ components:
         start_date:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         end_date:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         timezone:
           type: string
         monitors:
@@ -441,12 +475,14 @@ components:
           items:
             type: string
         statuspages:
+          x-go-name: StatusPages
           type: array
           items:
             type: string
         bulkUuid:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         createdBy:
           type: string
         createdAt:
@@ -456,6 +492,7 @@ components:
         notificationMinutes:
           type: integer
           nullable: true
+          x-go-type-skip-optional-pointer: false
         status:
           type: string
         updates:
@@ -487,6 +524,7 @@ components:
           items:
             type: string
         statuspages:
+          x-go-name: StatusPages
           type: array
           items:
             type: string
@@ -495,6 +533,7 @@ components:
         notificationMinutes:
           type: integer
           nullable: true
+          x-go-type-skip-optional-pointer: false
 
     UpdateMaintenanceRequest:
       type: object
@@ -503,34 +542,44 @@ components:
         name:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         title:
           $ref: '#/components/schemas/LocalizedText'
           nullable: true
+          x-go-type-skip-optional-pointer: false
         text:
           $ref: '#/components/schemas/LocalizedText'
           nullable: true
+          x-go-type-skip-optional-pointer: false
         start_date:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         end_date:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         monitors:
           type: array
           items:
             type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         statuspages:
+          x-go-name: StatusPages
           type: array
           items:
             type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         notificationOption:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         notificationMinutes:
           type: integer
           nullable: true
+          x-go-type-skip-optional-pointer: false
 
     # -------------------------------------------------------------------------
     # Healthcheck
@@ -565,6 +614,7 @@ components:
         periodValue:
           type: integer
           nullable: true
+          x-go-type-skip-optional-pointer: false
         periodType:
           type: string
         period:
@@ -592,6 +642,7 @@ components:
         escalationPolicy:
           $ref: '#/components/schemas/EscalationPolicyReference'
           nullable: true
+          x-go-type-skip-optional-pointer: false
 
     CreateHealthcheckRequest:
       type: object
@@ -606,15 +657,19 @@ components:
         cron:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         timezone:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         period_value:
           type: integer
           nullable: true
+          x-go-type-skip-optional-pointer: false
         period_type:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         grace_period_value:
           type: integer
         grace_period_type:
@@ -622,6 +677,7 @@ components:
         escalation_policy:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
 
     UpdateHealthcheckRequest:
       type: object
@@ -630,27 +686,35 @@ components:
         name:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         cron:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         timezone:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         period_value:
           type: integer
           nullable: true
+          x-go-type-skip-optional-pointer: false
         period_type:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         grace_period_value:
           type: integer
           nullable: true
+          x-go-type-skip-optional-pointer: false
         grace_period_type:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         escalation_policy:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
 
     # -------------------------------------------------------------------------
     # Outage
@@ -729,6 +793,7 @@ components:
         endDate:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         durationMs:
           type: integer
         statusCode:
@@ -746,14 +811,17 @@ components:
         acknowledgedAt:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         acknowledgedBy:
           $ref: '#/components/schemas/AcknowledgedByUser'
           nullable: true
+          x-go-type-skip-optional-pointer: false
         monitor:
           $ref: '#/components/schemas/MonitorReference'
         escalationPolicy:
           $ref: '#/components/schemas/EscalationPolicyReference'
           nullable: true
+          x-go-type-skip-optional-pointer: false
         severity:
           type: string
         summary:
@@ -788,9 +856,11 @@ components:
         severity:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         summary:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
 
     # -------------------------------------------------------------------------
     # Reports
@@ -909,6 +979,7 @@ components:
         - accent_color
         - auto_refresh
         - banner_header
+        - logo_height
         - hide_powered_by
         - hide_from_search_engines
         - subscribe
@@ -954,11 +1025,9 @@ components:
           type: string
           nullable: true
         subscribe:
-          type: object
-          description: Subscription settings (StatusPageSubscribeSettings)
+          x-go-type: StatusPageSubscribeSettings
         authentication:
-          type: object
-          description: Authentication settings (StatusPageAuthenticationSettings)
+          x-go-type: StatusPageAuthenticationSettings
 
     StatusPageService:
       type: object
@@ -972,7 +1041,6 @@ components:
         id:
           type: string
           x-go-type: "*FlexibleString"
-          nullable: true
         uuid:
           type: string
         name:
@@ -1034,6 +1102,7 @@ components:
           nullable: true
         hostedsubdomain:
           type: string
+          x-go-name: HostedSubdomain
         url:
           type: string
         password_protected:
@@ -1056,6 +1125,7 @@ components:
         - resultsPerPage
       properties:
         statuspages:
+          x-go-name: StatusPages
           type: array
           items:
             $ref: '#/components/schemas/StatusPage'
@@ -1079,15 +1149,19 @@ components:
         subdomain:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         hostname:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         website:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         description:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         languages:
           type: array
           items:
@@ -1095,55 +1169,67 @@ components:
         default_language:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         theme:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         font:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         accent_color:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         auto_refresh:
           type: boolean
           nullable: true
+          x-go-type-skip-optional-pointer: false
         banner_header:
           type: boolean
           nullable: true
+          x-go-type-skip-optional-pointer: false
         logo:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         logo_height:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         favicon:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         hide_powered_by:
           type: boolean
           nullable: true
+          x-go-type-skip-optional-pointer: false
         hide_from_search_engines:
           type: boolean
           nullable: true
+          x-go-type-skip-optional-pointer: false
         google_analytics:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         password:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         subscribe:
-          type: object
+          x-go-type: CreateStatusPageSubscribeSettings
           nullable: true
-          description: Subscribe settings (CreateStatusPageSubscribeSettings)
+          x-go-type-skip-optional-pointer: false
         authentication:
-          type: object
+          x-go-type: CreateStatusPageAuthenticationSettings
           nullable: true
-          description: Authentication settings (CreateStatusPageAuthenticationSettings)
+          x-go-type-skip-optional-pointer: false
         sections:
           type: array
           items:
-            type: object
-            description: CreateStatusPageSection
+            x-go-type: CreateStatusPageSection
 
     UpdateStatusPageRequest:
       type: object
@@ -1152,18 +1238,23 @@ components:
         name:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         subdomain:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         hostname:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         website:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         description:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         languages:
           type: array
           items:
@@ -1171,55 +1262,67 @@ components:
         default_language:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         theme:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         font:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         accent_color:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         auto_refresh:
           type: boolean
           nullable: true
+          x-go-type-skip-optional-pointer: false
         banner_header:
           type: boolean
           nullable: true
+          x-go-type-skip-optional-pointer: false
         logo:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         logo_height:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         favicon:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         hide_powered_by:
           type: boolean
           nullable: true
+          x-go-type-skip-optional-pointer: false
         hide_from_search_engines:
           type: boolean
           nullable: true
+          x-go-type-skip-optional-pointer: false
         google_analytics:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         password:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         subscribe:
-          type: object
+          x-go-type: CreateStatusPageSubscribeSettings
           nullable: true
-          description: Subscribe settings (CreateStatusPageSubscribeSettings)
+          x-go-type-skip-optional-pointer: false
         authentication:
-          type: object
+          x-go-type: CreateStatusPageAuthenticationSettings
           nullable: true
-          description: Authentication settings (CreateStatusPageAuthenticationSettings)
+          x-go-type-skip-optional-pointer: false
         sections:
           type: array
           items:
-            type: object
-            description: CreateStatusPageSection
+            x-go-type: CreateStatusPageSection
 
     # -------------------------------------------------------------------------
     # Subscribers
@@ -1246,12 +1349,15 @@ components:
         email:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         phone:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         slack_channel:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         created_at:
           type: string
 
@@ -1266,12 +1372,16 @@ components:
         email:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         phone:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         teams_webhook_url:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false
         language:
           type: string
           nullable: true
+          x-go-type-skip-optional-pointer: false

@@ -3,4 +3,9 @@ output: models_gen.go
 generate:
   models: true
 output-options:
-  skip-prune: false
+  skip-prune: true
+  name-normalizer: ToCamelCaseWithInitialisms
+  additional-initialisms:
+    - SSL
+    - MTTR
+  prefer-skip-optional-pointer: true
