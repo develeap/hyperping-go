@@ -1,0 +1,2232 @@
+openapi: "3.1.0"
+
+info:
+  title: Hyperping API
+  version: "2026-06-12"
+  description: >
+    REST and MCP API for the Hyperping monitoring platform.
+    All REST endpoints require Bearer token authentication.
+  license:
+    name: MIT
+
+servers:
+  - url: https://api.hyperping.io
+    description: Production
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: monitors
+    description: Uptime monitors
+  - name: healthchecks
+    description: Cron / heartbeat health checks
+  - name: incidents
+    description: Incidents and status updates
+  - name: maintenance
+    description: Maintenance windows
+  - name: outages
+    description: Outage records
+  - name: reports
+    description: Monitor performance reports
+  - name: statuspages
+    description: Public status pages
+  - name: subscribers
+    description: Status page subscribers
+  - name: mcp
+    description: MCP JSON-RPC 2.0 tool dispatch
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+
+    # ── Primitives ──────────────────────────────────────────────────────────────
+
+    FlexibleString:
+      description: A value that may be either a string (e.g. "2xx") or a number (e.g. 200).
+      oneOf:
+        - type: string
+        - type: number
+
+    LocalizedText:
+      type: object
+      description: A piece of text available in one or more languages.
+      properties:
+        en: { type: string }
+        fr: { type: string }
+        de: { type: string }
+        ru: { type: string }
+        nl: { type: string }
+        es: { type: string }
+        it: { type: string }
+        pt: { type: string }
+        ja: { type: string }
+        zh: { type: string }
+
+    RequestHeader:
+      type: object
+      required: [name, value]
+      properties:
+        name: { type: string }
+        value: { type: string }
+
+    ErrorResponse:
+      type: object
+      properties:
+        message: { type: string }
+        errors:
+          type: object
+          additionalProperties: true
+
+    # ── Monitors ────────────────────────────────────────────────────────────────
+
+    EscalationPolicyRef:
+      type: object
+      description: Read-side escalation policy reference (contains uuid and name).
+      properties:
+        uuid: { type: string }
+        name: { type: string }
+
+    EscalationPolicyWrite:
+      type: string
+      description: Write-side escalation policy reference (plain UUID string).
+
+    Monitor:
+      type: object
+      properties:
+        id: { type: integer }
+        uuid: { type: string }
+        name: { type: string }
+        url: { type: string }
+        protocol:
+          type: string
+          enum: [http, port, icmp, dns]
+        http_method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+        regions:
+          type: array
+          items: { type: string }
+        check_frequency: { type: integer }
+        request_headers:
+          type: array
+          items: { "$ref": "#/components/schemas/RequestHeader" }
+        request_body: { type: string }
+        follow_redirects: { type: boolean }
+        expected_status_code: { "$ref": "#/components/schemas/FlexibleString" }
+        required_keyword: { type: string }
+        paused: { type: boolean }
+        port: { type: integer }
+        alerts_wait: { type: integer }
+        escalation_policy: { "$ref": "#/components/schemas/EscalationPolicyRef" }
+        dns_record_type: { type: string }
+        dns_nameserver: { type: string }
+        dns_expected_answer: { type: string }
+        status: { type: string }
+        ssl_expiration: { type: integer }
+        projectUuid: { type: string }
+      example:
+        uuid: mon_abc123
+        name: Production API
+        url: https://api.example.com/health
+        protocol: http
+        http_method: GET
+        check_frequency: 60
+        paused: false
+        status: up
+
+    CreateMonitorRequest:
+      type: object
+      required: [name, url]
+      properties:
+        name: { type: string }
+        url: { type: string }
+        protocol:
+          type: string
+          enum: [http, port, icmp, dns]
+          default: http
+        http_method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+          default: GET
+        regions:
+          type: array
+          items: { type: string }
+        check_frequency: { type: integer }
+        follow_redirects: { type: boolean }
+        timeout: { type: integer }
+        expected_status_code: { type: string }
+        request_body: { type: string }
+        request_headers:
+          type: array
+          items: { "$ref": "#/components/schemas/RequestHeader" }
+        required_keyword: { type: string }
+        paused: { type: boolean }
+        port: { type: integer }
+        alerts_wait: { type: integer }
+        escalation_policy: { "$ref": "#/components/schemas/EscalationPolicyWrite" }
+        dns_record_type: { type: string }
+        dns_nameserver: { type: string }
+        dns_expected_answer: { type: string }
+        projectUuid: { type: string }
+
+    UpdateMonitorRequest:
+      type: object
+      properties:
+        name: { type: string }
+        url: { type: string }
+        protocol: { type: string }
+        http_method: { type: string }
+        regions:
+          type: array
+          items: { type: string }
+        check_frequency: { type: integer }
+        follow_redirects: { type: boolean }
+        timeout: { type: integer }
+        expected_status_code: { type: string }
+        request_body: { type: string }
+        request_headers:
+          type: array
+          items: { "$ref": "#/components/schemas/RequestHeader" }
+        required_keyword: { type: string }
+        paused: { type: boolean }
+        port: { type: integer }
+        alerts_wait: { type: integer }
+        escalation_policy: { "$ref": "#/components/schemas/EscalationPolicyWrite" }
+        dns_record_type: { type: string }
+        dns_nameserver: { type: string }
+        dns_expected_answer: { type: string }
+
+    # ── Healthchecks ────────────────────────────────────────────────────────────
+
+    EscalationPolicyReference:
+      type: object
+      description: Escalation policy reference used in healthchecks and outages.
+      properties:
+        uuid: { type: string }
+        name: { type: string }
+        alertedSteps: { type: integer }
+        totalSteps: { type: integer }
+
+    Healthcheck:
+      type: object
+      properties:
+        uuid: { type: string }
+        name: { type: string }
+        pingUrl: { type: string }
+        cron: { type: string }
+        timezone: { type: string }
+        tz: { type: string }
+        periodValue: { type: integer }
+        periodType:
+          type: string
+          enum: [seconds, minutes, hours, days]
+        period: { type: integer }
+        gracePeriod: { type: integer }
+        gracePeriodValue: { type: integer }
+        gracePeriodType:
+          type: string
+          enum: [seconds, minutes, hours, days]
+        isDown: { type: boolean }
+        isPaused: { type: boolean }
+        lastPing: { type: string }
+        dueDate: { type: string }
+        createdAt: { type: string }
+        lastLogStartDate: { type: string }
+        lastLogEndDate: { type: string }
+        escalationPolicy: { "$ref": "#/components/schemas/EscalationPolicyReference" }
+      example:
+        uuid: tok_abc123def456
+        name: Daily backup check
+        period: 86400
+        gracePeriod: 3600
+        isDown: false
+        isPaused: false
+
+    CreateHealthcheckRequest:
+      type: object
+      required: [name, grace_period_value, grace_period_type]
+      properties:
+        name: { type: string }
+        cron: { type: string }
+        timezone: { type: string }
+        period_value: { type: integer }
+        period_type:
+          type: string
+          enum: [seconds, minutes, hours, days]
+        grace_period_value: { type: integer }
+        grace_period_type:
+          type: string
+          enum: [seconds, minutes, hours, days]
+        escalation_policy: { type: string }
+
+    UpdateHealthcheckRequest:
+      type: object
+      properties:
+        name: { type: string }
+        cron: { type: string }
+        timezone: { type: string }
+        period_value: { type: integer }
+        period_type:
+          type: string
+          enum: [seconds, minutes, hours, days]
+        grace_period_value: { type: integer }
+        grace_period_type:
+          type: string
+          enum: [seconds, minutes, hours, days]
+        escalation_policy: { type: string }
+
+    HealthcheckAction:
+      type: object
+      properties:
+        message: { type: string }
+        uuid: { type: string }
+
+    # ── Incidents ───────────────────────────────────────────────────────────────
+
+    IncidentUpdate:
+      type: object
+      properties:
+        uuid: { type: string }
+        date: { type: string }
+        text: { "$ref": "#/components/schemas/LocalizedText" }
+        type:
+          type: string
+          enum: [investigating, identified, update, monitoring, resolved]
+
+    Incident:
+      type: object
+      properties:
+        uuid: { type: string }
+        date: { type: string }
+        title: { "$ref": "#/components/schemas/LocalizedText" }
+        text: { "$ref": "#/components/schemas/LocalizedText" }
+        type:
+          type: string
+          enum: [outage, incident]
+        affectedComponents:
+          type: array
+          items: { type: string }
+        statuspages:
+          type: array
+          items: { type: string }
+        updates:
+          type: array
+          items: { "$ref": "#/components/schemas/IncidentUpdate" }
+      example:
+        uuid: inc_xyz789
+        type: outage
+        statuspages: [sp_abc123]
+
+    AddIncidentUpdateRequest:
+      type: object
+      required: [text, type]
+      properties:
+        text: { "$ref": "#/components/schemas/LocalizedText" }
+        type:
+          type: string
+          enum: [investigating, identified, update, monitoring, resolved]
+        date: { type: string }
+
+    CreateIncidentRequest:
+      type: object
+      required: [title, text, type, statuspages]
+      properties:
+        title: { "$ref": "#/components/schemas/LocalizedText" }
+        text: { "$ref": "#/components/schemas/LocalizedText" }
+        type:
+          type: string
+          enum: [outage, incident]
+        affectedComponents:
+          type: array
+          items: { type: string }
+        statuspages:
+          type: array
+          items: { type: string }
+        date: { type: string }
+        updates:
+          type: array
+          items: { "$ref": "#/components/schemas/AddIncidentUpdateRequest" }
+
+    UpdateIncidentRequest:
+      type: object
+      properties:
+        title: { "$ref": "#/components/schemas/LocalizedText" }
+        text: { "$ref": "#/components/schemas/LocalizedText" }
+        type:
+          type: string
+          enum: [outage, incident]
+        affectedComponents:
+          type: array
+          items: { type: string }
+        statuspages:
+          type: array
+          items: { type: string }
+        updates:
+          type: array
+          items: { "$ref": "#/components/schemas/AddIncidentUpdateRequest" }
+
+    # ── Maintenance ─────────────────────────────────────────────────────────────
+
+    MaintenanceUpdate:
+      type: object
+      properties:
+        text: { "$ref": "#/components/schemas/LocalizedText" }
+        date: { type: string }
+
+    Maintenance:
+      type: object
+      properties:
+        uuid: { type: string }
+        name: { type: string }
+        title: { "$ref": "#/components/schemas/LocalizedText" }
+        text: { "$ref": "#/components/schemas/LocalizedText" }
+        start_date: { type: string }
+        end_date: { type: string }
+        timezone: { type: string }
+        monitors:
+          type: array
+          items: { type: string }
+        statuspages:
+          type: array
+          items: { type: string }
+        bulkUuid: { type: string }
+        createdBy: { type: string }
+        createdAt: { type: string }
+        notificationOption:
+          type: string
+          enum: [none, scheduled, immediate]
+        notificationMinutes: { type: integer }
+        status: { type: string }
+        updates:
+          type: array
+          items: { "$ref": "#/components/schemas/MaintenanceUpdate" }
+      example:
+        uuid: mw_abc123
+        name: Database upgrade
+        status: upcoming
+
+    CreateMaintenanceRequest:
+      type: object
+      required: [name, start_date, end_date, monitors]
+      properties:
+        name: { type: string }
+        title: { "$ref": "#/components/schemas/LocalizedText" }
+        text: { "$ref": "#/components/schemas/LocalizedText" }
+        start_date: { type: string }
+        end_date: { type: string }
+        monitors:
+          type: array
+          items: { type: string }
+        statuspages:
+          type: array
+          items: { type: string }
+        notificationOption:
+          type: string
+          enum: [none, scheduled, immediate]
+        notificationMinutes: { type: integer }
+
+    UpdateMaintenanceRequest:
+      type: object
+      properties:
+        name: { type: string }
+        title: { "$ref": "#/components/schemas/LocalizedText" }
+        text: { "$ref": "#/components/schemas/LocalizedText" }
+        start_date: { type: string }
+        end_date: { type: string }
+        monitors:
+          type: array
+          items: { type: string }
+        statuspages:
+          type: array
+          items: { type: string }
+        notificationOption:
+          type: string
+          enum: [none, scheduled, immediate]
+        notificationMinutes: { type: integer }
+
+    # ── Outages ─────────────────────────────────────────────────────────────────
+
+    AcknowledgedByUser:
+      type: object
+      properties:
+        uuid: { type: string }
+        email: { type: string }
+        name: { type: string }
+
+    MonitorReference:
+      type: object
+      properties:
+        uuid: { type: string }
+        name: { type: string }
+        url: { type: string }
+        protocol: { type: string }
+
+    OutageAction:
+      type: object
+      properties:
+        message: { type: string }
+
+    Outage:
+      type: object
+      properties:
+        uuid: { type: string }
+        startDate: { type: string }
+        endDate:
+          type: ["string", "null"]
+          description: ISO 8601 timestamp; null if the outage is ongoing.
+        durationMs: { type: integer }
+        statusCode: { type: integer }
+        description: { type: string }
+        outageType:
+          type: string
+          enum: [manual, automatic]
+        isResolved: { type: boolean }
+        detectedLocation: { type: string }
+        confirmedLocations: { type: string }
+        acknowledgedAt:
+          type: ["string", "null"]
+          description: ISO 8601 timestamp; null if not yet acknowledged.
+        acknowledgedBy: { "$ref": "#/components/schemas/AcknowledgedByUser" }
+        monitor: { "$ref": "#/components/schemas/MonitorReference" }
+        escalationPolicy: { "$ref": "#/components/schemas/EscalationPolicyReference" }
+        severity: { type: string }
+        summary: { type: string }
+      example:
+        uuid: outage_abc123
+        outageType: automatic
+        isResolved: false
+
+    CreateOutageRequest:
+      type: object
+      required: [monitorUuid, startDate, statusCode, description, outageType]
+      properties:
+        monitorUuid: { type: string }
+        startDate: { type: string }
+        endDate: { type: string }
+        statusCode: { type: integer }
+        description: { type: string }
+        outageType:
+          type: string
+          enum: [manual]
+        escalationPolicyUuid: { type: string }
+        severity: { type: string }
+        summary: { type: string }
+
+    # ── Reports ─────────────────────────────────────────────────────────────────
+
+    ReportPeriod:
+      type: object
+      properties:
+        from: { type: string }
+        to: { type: string }
+
+    OutageDetail:
+      type: object
+      properties:
+        startDate: { type: string }
+        endDate: { type: string }
+        duration: { type: integer }
+        durationFormatted: { type: string }
+
+    OutageStats:
+      type: object
+      properties:
+        count: { type: integer }
+        totalDowntime: { type: integer }
+        totalDowntimeFormatted: { type: string }
+        longestOutage: { type: integer }
+        longestOutageFormatted: { type: string }
+        details:
+          type: array
+          items: { "$ref": "#/components/schemas/OutageDetail" }
+
+    MonitorReport:
+      type: object
+      properties:
+        uuid: { type: string }
+        name: { type: string }
+        protocol: { type: string }
+        period: { "$ref": "#/components/schemas/ReportPeriod" }
+        sla: { type: number }
+        mttr: { type: integer }
+        mttrFormatted: { type: string }
+        outages: { "$ref": "#/components/schemas/OutageStats" }
+      example:
+        uuid: mon_abc123
+        name: Production API
+        sla: 99.95
+
+    ListMonitorReportsResponse:
+      type: object
+      properties:
+        period: { "$ref": "#/components/schemas/ReportPeriod" }
+        monitors:
+          type: array
+          items: { "$ref": "#/components/schemas/MonitorReport" }
+
+    # ── Status Pages ────────────────────────────────────────────────────────────
+
+    StatusPageSubscribeSettings:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        email: { type: boolean }
+        slack: { type: boolean }
+        teams: { type: boolean }
+        sms: { type: boolean }
+
+    StatusPageAuthenticationSettings:
+      type: object
+      properties:
+        password_protection: { type: boolean }
+        google_sso: { type: boolean }
+        saml_sso: { type: boolean }
+        google_allowed_domains:
+          type: array
+          items: { type: string }
+        sso_connection_uuid: { type: string }
+
+    StatusPageSettings:
+      type: object
+      properties:
+        name: { type: string }
+        website: { type: string }
+        description:
+          type: object
+          additionalProperties: { type: string }
+        languages:
+          type: array
+          items: { type: string }
+        default_language: { type: string }
+        theme:
+          type: string
+          enum: [light, dark, system]
+        font: { type: string }
+        accent_color: { type: string }
+        auto_refresh: { type: boolean }
+        banner_header: { type: boolean }
+        logo: { type: string }
+        logo_height: { type: string }
+        favicon: { type: string }
+        hide_powered_by: { type: boolean }
+        hide_from_search_engines: { type: boolean }
+        google_analytics: { type: string }
+        subscribe: { "$ref": "#/components/schemas/StatusPageSubscribeSettings" }
+        authentication: { "$ref": "#/components/schemas/StatusPageAuthenticationSettings" }
+
+    StatusPageService:
+      type: object
+      properties:
+        id: { "$ref": "#/components/schemas/FlexibleString" }
+        uuid: { type: string }
+        name:
+          type: object
+          additionalProperties: { type: string }
+        is_group: { type: boolean }
+        show_uptime: { type: boolean }
+        show_response_times: { type: boolean }
+        description:
+          type: object
+          additionalProperties: { type: string }
+        services:
+          type: array
+          items: { "$ref": "#/components/schemas/StatusPageService" }
+
+    StatusPageSection:
+      type: object
+      properties:
+        name:
+          type: object
+          additionalProperties: { type: string }
+        is_split: { type: boolean }
+        services:
+          type: array
+          items: { "$ref": "#/components/schemas/StatusPageService" }
+
+    StatusPage:
+      type: object
+      properties:
+        uuid: { type: string }
+        name: { type: string }
+        hostname:
+          type: ["string", "null"]
+          description: Custom domain; null if none configured.
+        hostedsubdomain: { type: string }
+        url: { type: string }
+        password_protected: { type: boolean }
+        settings: { "$ref": "#/components/schemas/StatusPageSettings" }
+        sections:
+          type: array
+          items: { "$ref": "#/components/schemas/StatusPageSection" }
+      example:
+        uuid: sp_abc123
+        name: Acme Status
+
+    StatusPagePaginatedResponse:
+      type: object
+      properties:
+        statuspages:
+          type: array
+          items: { "$ref": "#/components/schemas/StatusPage" }
+        hasNextPage: { type: boolean }
+        total: { type: integer }
+        page: { type: integer }
+        resultsPerPage: { type: integer }
+
+    CreateStatusPageRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        subdomain: { type: string }
+        hostname: { type: string }
+        website: { type: string }
+        description: { type: string }
+        languages:
+          type: array
+          items: { type: string }
+        default_language: { type: string }
+        theme:
+          type: string
+          enum: [light, dark, system]
+        font: { type: string }
+        accent_color: { type: string }
+        auto_refresh: { type: boolean }
+        banner_header: { type: boolean }
+        logo: { type: string }
+        logo_height: { type: string }
+        favicon: { type: string }
+        hide_powered_by: { type: boolean }
+        hide_from_search_engines: { type: boolean }
+        google_analytics: { type: string }
+        password: { type: string }
+
+    UpdateStatusPageRequest:
+      type: object
+      properties:
+        name: { type: string }
+        subdomain: { type: string }
+        hostname: { type: string }
+        website: { type: string }
+        description: { type: string }
+        languages:
+          type: array
+          items: { type: string }
+        default_language: { type: string }
+        theme: { type: string }
+        font: { type: string }
+        accent_color: { type: string }
+        auto_refresh: { type: boolean }
+        banner_header: { type: boolean }
+        logo: { type: string }
+        logo_height: { type: string }
+        favicon: { type: string }
+        hide_powered_by: { type: boolean }
+        hide_from_search_engines: { type: boolean }
+        google_analytics: { type: string }
+        password: { type: string }
+
+    # ── Subscribers ─────────────────────────────────────────────────────────────
+
+    StatusPageSubscriber:
+      type: object
+      properties:
+        id: { type: integer }
+        type:
+          type: string
+          enum: [email, sms, slack, teams]
+        value: { type: string }
+        language: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        slack_channel: { type: string }
+        created_at: { type: string }
+
+    SubscriberPaginatedResponse:
+      type: object
+      properties:
+        subscribers:
+          type: array
+          items: { "$ref": "#/components/schemas/StatusPageSubscriber" }
+        hasNextPage: { type: boolean }
+        total: { type: integer }
+        page: { type: integer }
+        resultsPerPage: { type: integer }
+
+    AddSubscriberRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [email, sms, teams]
+        email: { type: string }
+        phone: { type: string }
+        teams_webhook_url: { type: string }
+        language: { type: string }
+
+    # ── MCP models ──────────────────────────────────────────────────────────────
+
+    StatusSummary:
+      type: object
+      properties:
+        total: { type: integer }
+        up: { type: integer }
+        down: { type: integer }
+        paused: { type: integer }
+        unknown: { type: integer }
+        down_monitors:
+          type: array
+          items: { type: string }
+        paused_monitors:
+          type: array
+          items: { type: string }
+
+    AlertTimeGroup:
+      type: object
+      properties:
+        time: { type: string }
+        count: { type: integer }
+
+    Alert:
+      type: object
+      properties:
+        uuid: { type: string }
+        monitor_uuid: { type: string }
+        status: { type: string }
+        triggered_at: { type: string }
+        acknowledged_by: { type: string }
+        resolved_at: { type: string }
+
+    AlertHistory:
+      type: object
+      properties:
+        timeGroups:
+          type: array
+          items: { "$ref": "#/components/schemas/AlertTimeGroup" }
+        totalAlerts: { type: integer }
+        downAlerts: { type: integer }
+        upAlerts: { type: integer }
+        rawAlerts:
+          type: array
+          items: { "$ref": "#/components/schemas/Alert" }
+
+    TeamMember:
+      type: object
+      properties:
+        uuid: { type: string }
+        email: { type: string }
+        name: { type: string }
+        phone: { type: string }
+        profilePictureUrl: { type: string }
+        ssoPictureUrl:
+          type: ["string", "null"]
+          description: SSO profile picture URL; null when not set via SSO.
+        accountRole: { type: string }
+
+    EscalationStep:
+      type: object
+      properties:
+        delay: { type: integer }
+        target_type:
+          type: string
+          enum: [user, schedule, integration]
+        target_id: { type: string }
+
+    MCPEscalationPolicy:
+      type: object
+      properties:
+        uuid: { type: string }
+        name: { type: string }
+        team: { type: string }
+        steps:
+          type: array
+          items: { "$ref": "#/components/schemas/EscalationStep" }
+
+    MCPIntegration:
+      type: object
+      properties:
+        uuid: { type: string }
+        name: { type: string }
+        type: { type: string }
+
+    MCPError:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: integer }
+        message: { type: string }
+        data: {}
+
+    MCPResponse:
+      type: object
+      required: [jsonrpc, id]
+      properties:
+        jsonrpc:
+          type: string
+          enum: ["2.0"]
+        id:
+          type: ["string", "null"]
+        result: {}
+        error: { "$ref": "#/components/schemas/MCPError" }
+
+    # ── MCP request schemas ──────────────────────────────────────────────────────
+
+    MCPRequest_list_monitors:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [list_monitors] }
+        params:
+          type: object
+          properties:
+            status: { type: string, description: "Filter by state." }
+            page: { type: integer, description: "Zero-indexed page." }
+            limit: { type: integer, description: "Rows per page. Default 50, max 200." }
+
+    MCPRequest_get_monitor:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_monitor] }
+        params:
+          type: object
+          required: [uuid]
+          properties:
+            uuid: { type: string }
+
+    MCPRequest_create_monitor:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [create_monitor] }
+        params:
+          type: object
+          required: [name, url]
+          properties:
+            name: { type: string }
+            url: { type: string }
+            protocol: { type: string }
+            port: { type: integer }
+            http_method: { type: string }
+            regions: { type: array, items: { type: string } }
+            check_frequency: { type: number }
+            follow_redirects: { type: boolean }
+            timeout: { type: integer }
+            expected_status_code:
+              oneOf:
+                - { type: string }
+                - { type: number }
+            request_body: { type: string }
+            request_headers: { type: array, items: {} }
+            required_keyword: { type: string }
+            paused: { type: boolean }
+            alerts_wait: { type: number }
+            dns_record_type: { type: string }
+            dns_nameserver: { type: string }
+            dns_expected_answer: { type: string }
+            escalation_policy: { type: string }
+            group_id: {}
+
+    MCPRequest_update_monitor:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [update_monitor] }
+        params:
+          type: object
+          required: [uuid]
+          properties:
+            uuid: { type: string }
+            name: { type: string }
+            url: { type: string }
+            protocol: { type: string }
+            port: { type: integer }
+            http_method: { type: string }
+            regions: { type: array, items: { type: string } }
+            check_frequency: { type: number }
+            follow_redirects: { type: boolean }
+            timeout: { type: integer }
+            expected_status_code:
+              oneOf:
+                - { type: string }
+                - { type: number }
+            request_body: { type: string }
+            request_headers: { type: array, items: {} }
+            required_keyword: { type: string }
+            paused: { type: boolean }
+            alerts_wait: { type: number }
+            dns_record_type: { type: string }
+            dns_nameserver: { type: string }
+            dns_expected_answer: { type: string }
+            escalation_policy: { type: string }
+            group_id: {}
+
+    MCPRequest_pause_monitor:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [pause_monitor] }
+        params:
+          type: object
+          required: [uuid]
+          properties:
+            uuid: { type: string }
+
+    MCPRequest_resume_monitor:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [resume_monitor] }
+        params:
+          type: object
+          required: [uuid]
+          properties:
+            uuid: { type: string }
+
+    MCPRequest_search_monitors_by_name:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [search_monitors_by_name] }
+        params:
+          type: object
+          required: [query]
+          properties:
+            query: { type: string }
+
+    MCPRequest_get_status_summary:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_status_summary] }
+        params:
+          type: object
+
+    MCPRequest_list_outages:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [list_outages] }
+        params:
+          type: object
+          properties:
+            page: { type: integer }
+            search: { type: string }
+            status: { type: string }
+            type: { type: string }
+
+    MCPRequest_get_outage:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_outage] }
+        params:
+          type: object
+          required: [uuid]
+          properties:
+            uuid: { type: string }
+
+    MCPRequest_get_outage_timeline:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_outage_timeline] }
+        params:
+          type: object
+          required: [uuid]
+          properties:
+            uuid: { type: string }
+
+    MCPRequest_get_monitor_outages:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_monitor_outages] }
+        params:
+          type: object
+          required: [monitor_uuid]
+          properties:
+            monitor_uuid: { type: string }
+            page: { type: integer }
+            status: { type: string }
+
+    MCPRequest_list_recent_alerts:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [list_recent_alerts] }
+        params:
+          type: object
+          properties:
+            from: { type: string }
+            to: { type: string }
+            resolution: { type: string }
+            monitor_uuids: { type: array, items: { type: string } }
+
+    MCPRequest_get_monitor_uptime:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_monitor_uptime] }
+        params:
+          type: object
+          properties:
+            from: { type: string }
+            to: { type: string }
+            monitor_uuids: { type: array, items: { type: string } }
+            resolution: { type: string }
+
+    MCPRequest_get_monitor_response_time:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_monitor_response_time] }
+        params:
+          type: object
+          properties:
+            from: { type: string }
+            to: { type: string }
+            monitor_uuids: { type: array, items: { type: string } }
+            resolution: { type: string }
+
+    MCPRequest_get_monitor_mttr:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_monitor_mttr] }
+        params:
+          type: object
+          properties:
+            from: { type: string }
+            to: { type: string }
+            monitor_uuids: { type: array, items: { type: string } }
+
+    MCPRequest_get_monitor_mtta:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_monitor_mtta] }
+        params:
+          type: object
+          properties:
+            from: { type: string }
+            to: { type: string }
+            monitor_uuids: { type: array, items: { type: string } }
+
+    MCPRequest_get_monitor_anomalies:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_monitor_anomalies] }
+        params:
+          type: object
+          required: [uuid]
+          properties:
+            uuid: { type: string }
+
+    MCPRequest_get_monitor_http_logs:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_monitor_http_logs] }
+        params:
+          type: object
+          required: [uuid]
+          properties:
+            uuid: { type: string }
+            page: { type: integer }
+            limit: { type: integer }
+            level: { type: array, items: { type: string } }
+
+    MCPRequest_list_on_call_schedules:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [list_on_call_schedules] }
+        params:
+          type: object
+
+    MCPRequest_get_on_call_schedule:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_on_call_schedule] }
+        params:
+          type: object
+          required: [uuid]
+          properties:
+            uuid: { type: string }
+
+    MCPRequest_list_escalation_policies:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [list_escalation_policies] }
+        params:
+          type: object
+
+    MCPRequest_get_escalation_policy:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_escalation_policy] }
+        params:
+          type: object
+          required: [uuid]
+          properties:
+            uuid: { type: string }
+
+    MCPRequest_list_team_members:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [list_team_members] }
+        params:
+          type: object
+
+    MCPRequest_list_integrations:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [list_integrations] }
+        params:
+          type: object
+
+    MCPRequest_get_integration:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        id: { type: ["string", "null"] }
+        method: { type: string, enum: [get_integration] }
+        params:
+          type: object
+          required: [uuid]
+          properties:
+            uuid: { type: string }
+
+paths:
+
+  # ── Monitors ──────────────────────────────────────────────────────────────────
+
+  /v1/monitors:
+    get:
+      operationId: listMonitors
+      summary: List monitors
+      tags: [monitors]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: List of monitors
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { "$ref": "#/components/schemas/Monitor" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/ErrorResponse" }
+    post:
+      operationId: createMonitor
+      summary: Create a monitor
+      tags: [monitors]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/CreateMonitorRequest" }
+      responses:
+        "201":
+          description: Monitor created
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Monitor" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/ErrorResponse" }
+
+  /v1/monitors/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getMonitor
+      summary: Get a monitor
+      tags: [monitors]
+      responses:
+        "200":
+          description: Monitor details
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Monitor" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    put:
+      operationId: updateMonitor
+      summary: Update a monitor
+      tags: [monitors]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/UpdateMonitorRequest" }
+      responses:
+        "200":
+          description: Monitor updated
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Monitor" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteMonitor
+      summary: Delete a monitor
+      tags: [monitors]
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ── Healthchecks ─────────────────────────────────────────────────────────────
+
+  /v2/healthchecks:
+    get:
+      operationId: listHealthchecks
+      summary: List health checks
+      tags: [healthchecks]
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: List of health checks
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { "$ref": "#/components/schemas/Healthcheck" }
+        "401":
+          description: Unauthorized
+    post:
+      operationId: createHealthcheck
+      summary: Create a health check
+      tags: [healthchecks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/CreateHealthcheckRequest" }
+      responses:
+        "201":
+          description: Health check created
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Healthcheck" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+
+  /v2/healthchecks/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getHealthcheck
+      summary: Get a health check
+      tags: [healthchecks]
+      responses:
+        "200":
+          description: Health check details
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Healthcheck" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    put:
+      operationId: updateHealthcheck
+      summary: Update a health check
+      tags: [healthchecks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/UpdateHealthcheckRequest" }
+      responses:
+        "200":
+          description: Health check updated
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Healthcheck" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteHealthcheck
+      summary: Delete a health check
+      tags: [healthchecks]
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  /v2/healthchecks/{uuid}/pause:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: pauseHealthcheck
+      summary: Pause a health check
+      tags: [healthchecks]
+      responses:
+        "200":
+          description: Health check paused
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/HealthcheckAction" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  /v2/healthchecks/{uuid}/resume:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: resumeHealthcheck
+      summary: Resume a health check
+      tags: [healthchecks]
+      responses:
+        "200":
+          description: Health check resumed
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/HealthcheckAction" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ── Incidents ─────────────────────────────────────────────────────────────────
+
+  /v3/incidents:
+    get:
+      operationId: listIncidents
+      summary: List incidents
+      tags: [incidents]
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: List of incidents
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { "$ref": "#/components/schemas/Incident" }
+        "401":
+          description: Unauthorized
+    post:
+      operationId: createIncident
+      summary: Create an incident
+      tags: [incidents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/CreateIncidentRequest" }
+      responses:
+        "201":
+          description: Incident created
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Incident" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+
+  /v3/incidents/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getIncident
+      summary: Get an incident
+      tags: [incidents]
+      responses:
+        "200":
+          description: Incident details
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Incident" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    put:
+      operationId: updateIncident
+      summary: Update an incident
+      tags: [incidents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/UpdateIncidentRequest" }
+      responses:
+        "200":
+          description: Incident updated
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Incident" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteIncident
+      summary: Delete an incident
+      tags: [incidents]
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  /v3/incidents/{uuid}/updates:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: addIncidentUpdate
+      summary: Add an update to an incident
+      tags: [incidents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/AddIncidentUpdateRequest" }
+      responses:
+        "201":
+          description: Update added
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/IncidentUpdate" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ── Maintenance ───────────────────────────────────────────────────────────────
+
+  /v1/maintenance-windows:
+    get:
+      operationId: listMaintenanceWindows
+      summary: List maintenance windows
+      tags: [maintenance]
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: List of maintenance windows
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { "$ref": "#/components/schemas/Maintenance" }
+        "401":
+          description: Unauthorized
+    post:
+      operationId: createMaintenanceWindow
+      summary: Create a maintenance window
+      tags: [maintenance]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/CreateMaintenanceRequest" }
+      responses:
+        "201":
+          description: Maintenance window created
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Maintenance" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+
+  /v1/maintenance-windows/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getMaintenanceWindow
+      summary: Get a maintenance window
+      tags: [maintenance]
+      responses:
+        "200":
+          description: Maintenance window details
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Maintenance" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    put:
+      operationId: updateMaintenanceWindow
+      summary: Update a maintenance window
+      tags: [maintenance]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/UpdateMaintenanceRequest" }
+      responses:
+        "200":
+          description: Maintenance window updated
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Maintenance" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteMaintenanceWindow
+      summary: Delete a maintenance window
+      tags: [maintenance]
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ── Outages ───────────────────────────────────────────────────────────────────
+
+  /v2/outages:
+    get:
+      operationId: listOutages
+      summary: List outages
+      tags: [outages]
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: type
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of outages
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { "$ref": "#/components/schemas/Outage" }
+        "401":
+          description: Unauthorized
+    post:
+      operationId: createOutage
+      summary: Create an outage
+      tags: [outages]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/CreateOutageRequest" }
+      responses:
+        "201":
+          description: Outage created
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Outage" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+
+  /v2/outages/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getOutage
+      summary: Get an outage
+      tags: [outages]
+      responses:
+        "200":
+          description: Outage details
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Outage" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteOutage
+      summary: Delete an outage
+      tags: [outages]
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  /v2/outages/{uuid}/acknowledge:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: acknowledgeOutage
+      summary: Acknowledge an outage
+      tags: [outages]
+      responses:
+        "200":
+          description: Outage acknowledged
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/OutageAction" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  /v2/outages/{uuid}/unacknowledge:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: unacknowledgeOutage
+      summary: Unacknowledge an outage
+      tags: [outages]
+      responses:
+        "200":
+          description: Outage unacknowledged
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/OutageAction" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  /v2/outages/{uuid}/resolve:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: resolveOutage
+      summary: Resolve an outage
+      tags: [outages]
+      responses:
+        "200":
+          description: Outage resolved
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/OutageAction" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  /v2/outages/{uuid}/escalate:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: escalateOutage
+      summary: Escalate an outage
+      tags: [outages]
+      responses:
+        "200":
+          description: Outage escalated
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/OutageAction" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ── Reports ───────────────────────────────────────────────────────────────────
+
+  /v2/reporting/monitor-reports:
+    get:
+      operationId: listMonitorReports
+      summary: List monitor reports
+      tags: [reports]
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string }
+        - name: to
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Monitor reports
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/ListMonitorReportsResponse" }
+        "401":
+          description: Unauthorized
+
+  /v2/reporting/monitor-reports/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getMonitorReport
+      summary: Get a monitor report
+      tags: [reports]
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string }
+        - name: to
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Monitor report
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/MonitorReport" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ── Status Pages ──────────────────────────────────────────────────────────────
+
+  /v2/statuspages:
+    get:
+      operationId: listStatusPages
+      summary: List status pages
+      tags: [statuspages]
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Paginated list of status pages
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/StatusPagePaginatedResponse" }
+        "401":
+          description: Unauthorized
+    post:
+      operationId: createStatusPage
+      summary: Create a status page
+      tags: [statuspages]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/CreateStatusPageRequest" }
+      responses:
+        "201":
+          description: Status page created
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/StatusPage" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+
+  /v2/statuspages/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getStatusPage
+      summary: Get a status page
+      tags: [statuspages]
+      responses:
+        "200":
+          description: Status page details
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/StatusPage" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    put:
+      operationId: updateStatusPage
+      summary: Update a status page
+      tags: [statuspages]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/UpdateStatusPageRequest" }
+      responses:
+        "200":
+          description: Status page updated
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/StatusPage" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteStatusPage
+      summary: Delete a status page
+      tags: [statuspages]
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ── Subscribers ───────────────────────────────────────────────────────────────
+
+  /v2/statuspages/{uuid}/subscribers:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listSubscribers
+      summary: List subscribers for a status page
+      tags: [subscribers]
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Paginated list of subscribers
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/SubscriberPaginatedResponse" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Status page not found
+    post:
+      operationId: addSubscriber
+      summary: Add a subscriber to a status page
+      tags: [subscribers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/AddSubscriberRequest" }
+      responses:
+        "201":
+          description: Subscriber added
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/StatusPageSubscriber" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Status page not found
+
+  /v2/statuspages/{uuid}/subscribers/{id}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: { type: string }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getSubscriber
+      summary: Get a subscriber
+      tags: [subscribers]
+      responses:
+        "200":
+          description: Subscriber details
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/StatusPageSubscriber" }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteSubscriber
+      summary: Delete a subscriber
+      tags: [subscribers]
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ── MCP ───────────────────────────────────────────────────────────────────────
+
+  /v1/mcp:
+    post:
+      operationId: mcpCall
+      summary: Dispatch an MCP JSON-RPC 2.0 tool call
+      tags: [mcp]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - properties:
+                    method: { type: string, enum: [list_monitors] }
+                  "$ref": "#/components/schemas/MCPRequest_list_monitors"
+                - properties:
+                    method: { type: string, enum: [get_monitor] }
+                  "$ref": "#/components/schemas/MCPRequest_get_monitor"
+                - properties:
+                    method: { type: string, enum: [create_monitor] }
+                  "$ref": "#/components/schemas/MCPRequest_create_monitor"
+                - properties:
+                    method: { type: string, enum: [update_monitor] }
+                  "$ref": "#/components/schemas/MCPRequest_update_monitor"
+                - properties:
+                    method: { type: string, enum: [pause_monitor] }
+                  "$ref": "#/components/schemas/MCPRequest_pause_monitor"
+                - properties:
+                    method: { type: string, enum: [resume_monitor] }
+                  "$ref": "#/components/schemas/MCPRequest_resume_monitor"
+                - properties:
+                    method: { type: string, enum: [search_monitors_by_name] }
+                  "$ref": "#/components/schemas/MCPRequest_search_monitors_by_name"
+                - properties:
+                    method: { type: string, enum: [get_status_summary] }
+                  "$ref": "#/components/schemas/MCPRequest_get_status_summary"
+                - properties:
+                    method: { type: string, enum: [list_outages] }
+                  "$ref": "#/components/schemas/MCPRequest_list_outages"
+                - properties:
+                    method: { type: string, enum: [get_outage] }
+                  "$ref": "#/components/schemas/MCPRequest_get_outage"
+                - properties:
+                    method: { type: string, enum: [get_outage_timeline] }
+                  "$ref": "#/components/schemas/MCPRequest_get_outage_timeline"
+                - properties:
+                    method: { type: string, enum: [get_monitor_outages] }
+                  "$ref": "#/components/schemas/MCPRequest_get_monitor_outages"
+                - properties:
+                    method: { type: string, enum: [list_recent_alerts] }
+                  "$ref": "#/components/schemas/MCPRequest_list_recent_alerts"
+                - properties:
+                    method: { type: string, enum: [get_monitor_uptime] }
+                  "$ref": "#/components/schemas/MCPRequest_get_monitor_uptime"
+                - properties:
+                    method: { type: string, enum: [get_monitor_response_time] }
+                  "$ref": "#/components/schemas/MCPRequest_get_monitor_response_time"
+                - properties:
+                    method: { type: string, enum: [get_monitor_mttr] }
+                  "$ref": "#/components/schemas/MCPRequest_get_monitor_mttr"
+                - properties:
+                    method: { type: string, enum: [get_monitor_mtta] }
+                  "$ref": "#/components/schemas/MCPRequest_get_monitor_mtta"
+                - properties:
+                    method: { type: string, enum: [get_monitor_anomalies] }
+                  "$ref": "#/components/schemas/MCPRequest_get_monitor_anomalies"
+                - properties:
+                    method: { type: string, enum: [get_monitor_http_logs] }
+                  "$ref": "#/components/schemas/MCPRequest_get_monitor_http_logs"
+                - properties:
+                    method: { type: string, enum: [list_on_call_schedules] }
+                  "$ref": "#/components/schemas/MCPRequest_list_on_call_schedules"
+                - properties:
+                    method: { type: string, enum: [get_on_call_schedule] }
+                  "$ref": "#/components/schemas/MCPRequest_get_on_call_schedule"
+                - properties:
+                    method: { type: string, enum: [list_escalation_policies] }
+                  "$ref": "#/components/schemas/MCPRequest_list_escalation_policies"
+                - properties:
+                    method: { type: string, enum: [get_escalation_policy] }
+                  "$ref": "#/components/schemas/MCPRequest_get_escalation_policy"
+                - properties:
+                    method: { type: string, enum: [list_team_members] }
+                  "$ref": "#/components/schemas/MCPRequest_list_team_members"
+                - properties:
+                    method: { type: string, enum: [list_integrations] }
+                  "$ref": "#/components/schemas/MCPRequest_list_integrations"
+                - properties:
+                    method: { type: string, enum: [get_integration] }
+                  "$ref": "#/components/schemas/MCPRequest_get_integration"
+      responses:
+        "200":
+          description: MCP JSON-RPC 2.0 response
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/MCPResponse" }
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
