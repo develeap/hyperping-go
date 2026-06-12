@@ -607,6 +607,13 @@ func (c *MCPClient) ResumeMonitor(ctx context.Context, uuid string) error {
 	return err
 }
 
+// DeleteMonitor deletes a monitor by UUID.
+// Returns ErrNotFound if the monitor does not exist.
+func (c *MCPClient) DeleteMonitor(ctx context.Context, uuid string) error {
+	_, err := c.transport.CallTool(ctx, "delete_monitor", map[string]any{"uuid": uuid})
+	return err
+}
+
 // ==================== Uptime ====================
 
 // GetMonitorUptime returns SLA uptime metrics over a date window for the

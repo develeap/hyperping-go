@@ -13,9 +13,10 @@ import (
 
 // recordingMCPTransport captures the toolName and args of the last CallTool
 // invocation so request-side assertions can verify the client sends the right
-// arg names + types. Returns a configurable result.
+// arg names + types. Returns a configurable result or error.
 type recordingMCPTransport struct {
 	result       any
+	callErr      error // returned by CallTool when non-nil
 	lastTool     string
 	lastArgs     map[string]any
 	callCount    int
@@ -31,7 +32,7 @@ func (m *recordingMCPTransport) CallTool(ctx context.Context, toolName string, a
 	m.callCount++
 	m.lastTool = toolName
 	m.lastArgs = args
-	return m.result, nil
+	return m.result, m.callErr
 }
 
 // ============================================================

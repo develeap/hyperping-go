@@ -32,6 +32,7 @@ package hyperping
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -235,5 +236,76 @@ func TestIntegration_ListIntegrations_DecodesLive(t *testing.T) {
 	_, err := c.ListIntegrations(ctx)
 	if err != nil {
 		t.Fatalf("ListIntegrations failed: %v", err)
+	}
+}
+
+// serverHasTool checks whether toolName appears in the pinned tools-list
+// snapshot (testdata/mcp_tools_list.json). Returns false when the snapshot
+// has not been updated to include the tool yet.
+func serverHasTool(t *testing.T, toolName string) bool {
+	t.Helper()
+	snapshot := loadToolsListSnapshot(t)
+	for _, tool := range snapshot.Result.Tools {
+		if tool.Name == toolName {
+			return true
+		}
+	}
+	return false
+}
+
+// TestIntegration_DeleteMonitor_LiveRoundTrip verifies the full create-then-delete
+// cycle against the live MCP server.
+//
+// The test is gated on two conditions:
+//  1. HYPERPING_TEST_API_KEY must be set (standard integration gate).
+//  2. delete_monitor must appear in testdata/mcp_tools_list.json (the pinned
+//     server snapshot). The Hyperping MCP server did not expose delete_monitor
+//     as of 2026-06-12; once the server adds the tool, re-capture the snapshot
+//     with tools/list and the test will run automatically.
+//
+// Cleanup: the defer block calls DeleteMonitor a second time so a mid-test
+// panic does not orphan the created monitor. The second call is expected to
+// return ErrNotFound and is intentionally ignored.
+func TestIntegration_DeleteMonitor_LiveRoundTrip(t *testing.T) {
+	if !serverHasTool(t, "delete_monitor") {
+		t.Skip("delete_monitor not in testdata/mcp_tools_list.json; re-capture snapshot when the server exposes the tool")
+	}
+
+	c := liveMCPClient(t)
+	ctx, cancel := withTimeout(t)
+	defer cancel()
+
+	// Create a disposable monitor that will be deleted by this test.
+	created, err := c.CreateMonitor(ctx, MCPCreateMonitorRequest{
+		Name:      "integration-test-delete-98a932",
+		URL:       "https://httpbin.org/status/200",
+		Method:    "GET",
+		Frequency: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateMonitor failed: %v", err)
+	}
+	if created == nil || created.UUID == "" {
+		t.Fatal("CreateMonitor returned nil or empty UUID")
+	}
+
+	// Best-effort cleanup: covers the case where the test fails after Create
+	// but before Delete so the monitor is not left orphaned indefinitely.
+	defer func() {
+		_ = c.DeleteMonitor(context.Background(), created.UUID)
+	}()
+
+	// Delete the monitor.
+	if err := c.DeleteMonitor(ctx, created.UUID); err != nil {
+		t.Fatalf("DeleteMonitor failed: %v", err)
+	}
+
+	// Verify: a subsequent GetMonitor must return ErrNotFound.
+	_, err = c.GetMonitor(ctx, created.UUID)
+	if err == nil {
+		t.Fatal("GetMonitor after delete: expected error, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetMonitor after delete: expected ErrNotFound, got %v", err)
 	}
 }

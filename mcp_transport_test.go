@@ -350,7 +350,7 @@ func TestMCPClient_GetStatusSummary(t *testing.T) {
 	require.Equal(t, 10, result.Total)
 }
 
-// Test 2.2: All 16 tools available
+// Test 2.2: All tools available
 func TestMCPClient_AllTools(t *testing.T) {
 	transport := &mockMCPTransport{result: map[string]any{}}
 	client := NewMCPClient(transport)
@@ -371,6 +371,206 @@ func TestMCPClient_AllTools(t *testing.T) {
 	require.NotNil(t, client.GetIntegration)
 	require.NotNil(t, client.GetOutageTimeline)
 	require.NotNil(t, client.SearchMonitorsByName)
+	// write tools
+	require.NotNil(t, client.CreateMonitor)
+	require.NotNil(t, client.UpdateMonitor)
+	require.NotNil(t, client.PauseMonitor)
+	require.NotNil(t, client.ResumeMonitor)
+	require.NotNil(t, client.DeleteMonitor)
+}
+
+// Test 2.3: CreateMonitor routes to "create_monitor" with correct args
+func TestMCPClient_CreateMonitor(t *testing.T) {
+	cases := []struct {
+		name    string
+		req     MCPCreateMonitorRequest
+		result  any
+		wantErr bool
+		wantArg string
+		wantVal any
+	}{
+		{
+			name: "happy path",
+			req:  MCPCreateMonitorRequest{Name: "test-mon", URL: "https://example.com", Method: "GET", Frequency: 60},
+			result: map[string]any{
+				"uuid": "mon_abc", "name": "test-mon", "url": "https://example.com",
+				"status": "up", "protocol": "http", "frequency": float64(60), "expected_status": float64(200),
+			},
+			wantArg: "name",
+			wantVal: "test-mon",
+		},
+		{
+			name:    "transport error propagates",
+			req:     MCPCreateMonitorRequest{Name: "x", URL: "https://x.com"},
+			wantErr: true,
+		},
+		{
+			name:   "nil result returns nil monitor",
+			req:    MCPCreateMonitorRequest{Name: "x", URL: "https://x.com"},
+			result: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMCPTransport{result: tc.result}
+			if tc.wantErr {
+				rec.callErr = errors.New("transport error")
+			}
+			client := NewMCPClient(rec)
+			got, err := client.CreateMonitor(context.Background(), tc.req)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "create_monitor", rec.lastTool)
+			if tc.wantArg != "" {
+				require.Equal(t, tc.wantVal, rec.lastArgs[tc.wantArg])
+			}
+			if tc.result != nil {
+				require.NotNil(t, got)
+				require.Equal(t, "mon_abc", got.UUID)
+			}
+		})
+	}
+}
+
+// Test 2.4: UpdateMonitor routes to "update_monitor" and includes uuid
+func TestMCPClient_UpdateMonitor(t *testing.T) {
+	cases := []struct {
+		name    string
+		uuid    string
+		req     MCPUpdateMonitorRequest
+		result  any
+		wantErr bool
+	}{
+		{
+			name: "happy path",
+			uuid: "mon_xyz",
+			req:  MCPUpdateMonitorRequest{Name: "renamed"},
+			result: map[string]any{
+				"uuid": "mon_xyz", "name": "renamed", "url": "https://example.com",
+				"status": "up", "protocol": "http", "frequency": float64(60), "expected_status": float64(200),
+			},
+		},
+		{
+			name:    "transport error propagates",
+			uuid:    "mon_xyz",
+			req:     MCPUpdateMonitorRequest{},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMCPTransport{result: tc.result}
+			if tc.wantErr {
+				rec.callErr = errors.New("transport error")
+			}
+			client := NewMCPClient(rec)
+			got, err := client.UpdateMonitor(context.Background(), tc.uuid, tc.req)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "update_monitor", rec.lastTool)
+			require.Equal(t, tc.uuid, rec.lastArgs["uuid"])
+			if tc.result != nil {
+				require.NotNil(t, got)
+			}
+		})
+	}
+}
+
+// Test 2.5: PauseMonitor routes to "pause_monitor" with correct uuid
+func TestMCPClient_PauseMonitor(t *testing.T) {
+	cases := []struct {
+		name    string
+		uuid    string
+		wantErr bool
+	}{
+		{name: "happy path", uuid: "mon_abc"},
+		{name: "transport error propagates", uuid: "mon_abc", wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMCPTransport{}
+			if tc.wantErr {
+				rec.callErr = errors.New("transport error")
+			}
+			client := NewMCPClient(rec)
+			err := client.PauseMonitor(context.Background(), tc.uuid)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "pause_monitor", rec.lastTool)
+			require.Equal(t, tc.uuid, rec.lastArgs["uuid"])
+		})
+	}
+}
+
+// Test 2.6: ResumeMonitor routes to "resume_monitor" with correct uuid
+func TestMCPClient_ResumeMonitor(t *testing.T) {
+	cases := []struct {
+		name    string
+		uuid    string
+		wantErr bool
+	}{
+		{name: "happy path", uuid: "mon_abc"},
+		{name: "transport error propagates", uuid: "mon_abc", wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMCPTransport{}
+			if tc.wantErr {
+				rec.callErr = errors.New("transport error")
+			}
+			client := NewMCPClient(rec)
+			err := client.ResumeMonitor(context.Background(), tc.uuid)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "resume_monitor", rec.lastTool)
+			require.Equal(t, tc.uuid, rec.lastArgs["uuid"])
+		})
+	}
+}
+
+// Test 2.7: DeleteMonitor routes to "delete_monitor" with correct uuid
+func TestMCPClient_DeleteMonitor(t *testing.T) {
+	cases := []struct {
+		name    string
+		uuid    string
+		callErr error
+		wantErr bool
+	}{
+		{name: "happy path", uuid: "mon_del"},
+		{name: "transport error propagates", uuid: "mon_del", callErr: errors.New("transport error"), wantErr: true},
+		{name: "not found propagates", uuid: "mon_missing", callErr: ErrNotFound, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMCPTransport{callErr: tc.callErr}
+			client := NewMCPClient(rec)
+			err := client.DeleteMonitor(context.Background(), tc.uuid)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "delete_monitor", rec.lastTool)
+			require.Equal(t, tc.uuid, rec.lastArgs["uuid"])
+		})
+	}
 }
 
 // ==================== Phase 3: Model Tests ====================
