@@ -100,6 +100,25 @@ jobs:
               --head "$BRANCH" || echo "PR already exists or creation skipped"
           fi
 
+      - name: Install oasdiff
+        if: env.EXIT_CODE == '0'
+        run: |
+          export GOTOOLCHAIN=auto
+          go install github.com/oasdiff/oasdiff/cmd/oasdiff@v1.18.4
+
+      - name: Diff latest snapshot against canonical spec
+        if: env.EXIT_CODE == '0'
+        run: |
+          SNAP=$(ls -t tools/cmd/scraper/snapshots/*/hyperping-api.yaml 2>/dev/null | head -1)
+          if [ -z "$SNAP" ]; then
+            echo "No snapshot found; skipping drift check." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "## oasdiff drift (latest snapshot vs openapi.yaml)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          oasdiff diff "$SNAP" openapi.yaml >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Check for scraper failure
         if: env.EXIT_CODE != '0'
         run: |
