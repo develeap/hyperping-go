@@ -517,10 +517,11 @@ func (c *Client) handleErrorResponse(
 	body []byte,
 	attempt int,
 ) attemptResult {
-	apiErr := c.parseErrorResponse(resp.StatusCode, resp.Header, body)
+	requestID := resp.Header.Get(requestIDHeader)
+	typedErr := c.parseErrorResponse(resp.StatusCode, resp.Header, body, requestID)
 
 	if !retryableStatusCodes[resp.StatusCode] || attempt >= c.maxRetries {
-		return attemptResult{err: apiErr}
+		return attemptResult{err: typedErr}
 	}
 
 	c.logDebug(ctx, "retrying request", map[string]interface{}{
@@ -533,8 +534,17 @@ func (c *Client) handleErrorResponse(
 	if c.metrics != nil {
 		c.metrics.RecordRetry(ctx, method, path, attempt+1)
 	}
-	c.sleep(ctx, c.calculateBackoff(attempt, apiErr.RetryAfter))
-	return attemptResult{retry: true, lastErr: apiErr}
+	c.sleep(ctx, c.calculateBackoff(attempt, retryAfterFromError(typedErr)))
+	return attemptResult{retry: true, lastErr: typedErr}
+}
+
+// retryAfterFromError extracts RetryAfter from an *APIError anywhere in the error chain.
+func retryAfterFromError(err error) int {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.RetryAfter
+	}
+	return 0
 }
 
 // marshalBody marshals the request body to JSON, returning nil for nil input.
@@ -612,7 +622,7 @@ func (c *Client) doRequestWithRetry(ctx context.Context, method, path string, bo
 }
 
 // parseErrorResponse parses an error response from the API.
-func (c *Client) parseErrorResponse(statusCode int, headers http.Header, body []byte) *APIError {
+func (c *Client) parseErrorResponse(statusCode int, headers http.Header, body []byte, requestID string) error {
 	apiErr := &APIError{
 		StatusCode: statusCode,
 		Message:    http.StatusText(statusCode),
@@ -640,7 +650,18 @@ func (c *Client) parseErrorResponse(statusCode int, headers http.Header, body []
 		apiErr.Details = errResp.Details
 	}
 
-	return apiErr
+	switch {
+	case statusCode == http.StatusTooManyRequests:
+		return &HyperpingRateLimitError{RequestID: requestID, RetryAfter: apiErr.RetryAfter, apiError: apiErr}
+	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
+		return &HyperpingAuthError{RequestID: requestID, apiError: apiErr}
+	case statusCode == http.StatusNotFound:
+		return &HyperpingNotFoundError{RequestID: requestID, apiError: apiErr}
+	case statusCode == http.StatusBadRequest || statusCode == http.StatusUnprocessableEntity:
+		return &HyperpingValidationError{RequestID: requestID, Details: apiErr.Details, apiError: apiErr}
+	default:
+		return apiErr
+	}
 }
 
 // maxRetryAfterSeconds is the maximum Retry-After value we honour (10 minutes).
