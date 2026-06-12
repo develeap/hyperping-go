@@ -124,6 +124,25 @@ jobs:
           fi
           go test -tags=integration -race -count=1 -timeout=5m ./...
 
+  generate-check:
+    name: Codegen staleness check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.26'
+          cache-dependency-path: go.sum
+
+      - name: Check models_gen.go is up to date
+        run: |
+          export GOTOOLCHAIN=auto
+          go generate ./...
+          git diff --exit-code models_gen.go
+
   cross-compile:
     name: Cross-compile check
     runs-on: ubuntu-latest
