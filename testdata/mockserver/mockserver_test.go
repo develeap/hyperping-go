@@ -516,16 +516,44 @@ func TestMockServer_RequestLog_BodyCaptured(t *testing.T) {
 }
 
 // =============================================================================
-// Phase 2 stub
+// Phase 2: spec-driven OAS validation
 // =============================================================================
 
-func TestMockServer_WithSchemaFile_NoOp(t *testing.T) {
-	// WithSchemaFile is reserved for Phase 2 (GO-07); it must not panic.
-	srv := mockserver.NewMockServer(t, mockserver.WithSchemaFile("nonexistent.yaml"))
-	resp := makeReq(t, http.MethodGet, srv.URL+"/v1/monitors", "any", nil)
+func TestMockServer_WithSchemaFile_ActivatesSpecValidation(t *testing.T) {
+	srv := mockserver.NewMockServer(t, mockserver.WithSchemaFile("../../openapi.yaml"))
+	body := map[string]string{"name": "missing-url"}
+	resp := makeReq(t, http.MethodPost, srv.URL+"/v1/monitors", "any", body)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("want 200 even with no-op schema file, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 for missing url and protocol, got %d", resp.StatusCode)
+	}
+}
+
+func TestMockServer_WithSchemaFile_ValidMonitorCreation(t *testing.T) {
+	srv := mockserver.NewMockServer(t, mockserver.WithSchemaFile("../../openapi.yaml"))
+	body := hyperping.CreateMonitorRequest{
+		Name:     "spec-mon",
+		URL:      "https://example.com",
+		Protocol: "http",
+	}
+	resp := makeReq(t, http.MethodPost, srv.URL+"/v1/monitors", "any", body)
+	var created hyperping.Monitor
+	mustDecode(t, resp, &created)
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("want 201, got %d", resp.StatusCode)
+	}
+	if created.UUID == "" {
+		t.Error("expected non-empty UUID")
+	}
+}
+
+func TestMockServer_WithSchemaFile_HealthcheckStricterRequired(t *testing.T) {
+	srv := mockserver.NewMockServer(t, mockserver.WithSchemaFile("../../openapi.yaml"))
+	body := map[string]string{"name": "only-name"}
+	resp := makeReq(t, http.MethodPost, srv.URL+"/v2/healthchecks", "any", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 (spec requires grace_period_value and grace_period_type too), got %d", resp.StatusCode)
 	}
 }
 
