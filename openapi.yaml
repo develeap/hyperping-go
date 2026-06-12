@@ -1,0 +1,1277 @@
+openapi: "3.0.3"
+info:
+  title: Hyperping API
+  version: "3"
+  description: Hyperping monitoring API — monitors, incidents, maintenance windows, healthchecks, outages, reports, status pages, and subscribers.
+
+paths: {}
+
+components:
+  schemas:
+
+    # -------------------------------------------------------------------------
+    # Common
+    # -------------------------------------------------------------------------
+
+    LocalizedText:
+      type: object
+      description: Text that can be localized in multiple languages.
+      properties:
+        en:
+          type: string
+        fr:
+          type: string
+        de:
+          type: string
+        ru:
+          type: string
+        nl:
+          type: string
+        es:
+          type: string
+        it:
+          type: string
+        pt:
+          type: string
+        ja:
+          type: string
+        zh:
+          type: string
+
+    RequestHeader:
+      type: object
+      description: A single HTTP request header.
+      required:
+        - name
+        - value
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+
+    # -------------------------------------------------------------------------
+    # Monitor
+    # -------------------------------------------------------------------------
+
+    EscalationPolicyRef:
+      type: object
+      description: Escalation policy UUID and display name returned by the read API.
+      required:
+        - uuid
+        - name
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+
+    Monitor:
+      type: object
+      description: A Hyperping monitor.
+      required:
+        - id
+        - uuid
+        - name
+        - url
+        - protocol
+        - http_method
+        - regions
+        - check_frequency
+        - request_headers
+        - follow_redirects
+        - expected_status_code
+        - paused
+      properties:
+        id:
+          type: integer
+        uuid:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+        protocol:
+          type: string
+        projectUuid:
+          type: string
+        http_method:
+          type: string
+        regions:
+          type: array
+          items:
+            type: string
+        check_frequency:
+          type: integer
+        request_headers:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestHeader'
+        request_body:
+          type: string
+        follow_redirects:
+          type: boolean
+        expected_status_code:
+          type: string
+          x-go-type: FlexibleString
+        required_keyword:
+          type: string
+          nullable: true
+        paused:
+          type: boolean
+        port:
+          type: integer
+          nullable: true
+        alerts_wait:
+          type: integer
+        escalation_policy:
+          $ref: '#/components/schemas/EscalationPolicyRef'
+          nullable: true
+        dns_record_type:
+          type: string
+          nullable: true
+        dns_nameserver:
+          type: string
+          nullable: true
+        dns_expected_answer:
+          type: string
+          nullable: true
+        status:
+          type: string
+        ssl_expiration:
+          type: integer
+          nullable: true
+
+    CreateMonitorRequest:
+      type: object
+      description: Request body for creating a monitor.
+      required:
+        - name
+        - url
+        - protocol
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        protocol:
+          type: string
+        projectUuid:
+          type: string
+        http_method:
+          type: string
+        check_frequency:
+          type: integer
+        regions:
+          type: array
+          items:
+            type: string
+        request_headers:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestHeader'
+        request_body:
+          type: string
+          nullable: true
+        follow_redirects:
+          type: boolean
+          nullable: true
+        expected_status_code:
+          type: string
+        required_keyword:
+          type: string
+          nullable: true
+        paused:
+          type: boolean
+        port:
+          type: integer
+          nullable: true
+        alerts_wait:
+          type: integer
+          nullable: true
+        escalation_policy:
+          type: string
+          nullable: true
+        dns_record_type:
+          type: string
+          nullable: true
+        dns_nameserver:
+          type: string
+          nullable: true
+        dns_expected_answer:
+          type: string
+          nullable: true
+
+    UpdateMonitorRequest:
+      type: object
+      description: Request body for updating a monitor.
+      properties:
+        name:
+          type: string
+          nullable: true
+        url:
+          type: string
+          nullable: true
+        protocol:
+          type: string
+          nullable: true
+        projectUuid:
+          type: string
+          nullable: true
+        http_method:
+          type: string
+          nullable: true
+        check_frequency:
+          type: integer
+          nullable: true
+        regions:
+          type: array
+          items:
+            type: string
+          nullable: true
+        request_headers:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestHeader'
+          nullable: true
+        request_body:
+          type: string
+          nullable: true
+        follow_redirects:
+          type: boolean
+          nullable: true
+        expected_status_code:
+          type: string
+          nullable: true
+        required_keyword:
+          type: string
+          nullable: true
+        paused:
+          type: boolean
+          nullable: true
+        port:
+          type: integer
+          nullable: true
+        alerts_wait:
+          type: integer
+          nullable: true
+        escalation_policy:
+          type: string
+          nullable: true
+        dns_record_type:
+          type: string
+          nullable: true
+        dns_nameserver:
+          type: string
+          nullable: true
+        dns_expected_answer:
+          type: string
+          nullable: true
+
+    # -------------------------------------------------------------------------
+    # Incident
+    # -------------------------------------------------------------------------
+
+    IncidentUpdate:
+      type: object
+      description: An update entry on an incident.
+      required:
+        - uuid
+        - date
+        - text
+        - type
+      properties:
+        uuid:
+          type: string
+        date:
+          type: string
+        text:
+          $ref: '#/components/schemas/LocalizedText'
+        type:
+          type: string
+
+    Incident:
+      type: object
+      description: A Hyperping incident.
+      required:
+        - uuid
+        - title
+        - text
+        - type
+        - statuspages
+      properties:
+        uuid:
+          type: string
+        date:
+          type: string
+        title:
+          $ref: '#/components/schemas/LocalizedText'
+        text:
+          $ref: '#/components/schemas/LocalizedText'
+        type:
+          type: string
+        affectedComponents:
+          type: array
+          items:
+            type: string
+        statuspages:
+          type: array
+          items:
+            type: string
+        updates:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentUpdate'
+
+    AddIncidentUpdateRequest:
+      type: object
+      description: Request body for adding an update to an incident.
+      required:
+        - text
+        - type
+        - date
+      properties:
+        text:
+          $ref: '#/components/schemas/LocalizedText'
+        type:
+          type: string
+        date:
+          type: string
+
+    CreateIncidentRequest:
+      type: object
+      description: Request body for creating an incident.
+      required:
+        - title
+        - text
+        - type
+        - statuspages
+      properties:
+        title:
+          $ref: '#/components/schemas/LocalizedText'
+        text:
+          $ref: '#/components/schemas/LocalizedText'
+        type:
+          type: string
+        affectedComponents:
+          type: array
+          items:
+            type: string
+        statuspages:
+          type: array
+          items:
+            type: string
+        date:
+          type: string
+        updates:
+          type: array
+          items:
+            $ref: '#/components/schemas/AddIncidentUpdateRequest'
+
+    UpdateIncidentRequest:
+      type: object
+      description: Request body for updating an incident.
+      properties:
+        title:
+          $ref: '#/components/schemas/LocalizedText'
+          nullable: true
+        text:
+          $ref: '#/components/schemas/LocalizedText'
+          nullable: true
+        type:
+          type: string
+          nullable: true
+        affectedComponents:
+          type: array
+          items:
+            type: string
+          nullable: true
+        statuspages:
+          type: array
+          items:
+            type: string
+          nullable: true
+        updates:
+          type: array
+          items:
+            $ref: '#/components/schemas/AddIncidentUpdateRequest'
+
+    # -------------------------------------------------------------------------
+    # Maintenance
+    # -------------------------------------------------------------------------
+
+    MaintenanceUpdate:
+      type: object
+      description: An update entry on a maintenance window.
+      required:
+        - text
+        - date
+      properties:
+        text:
+          $ref: '#/components/schemas/LocalizedText'
+        date:
+          type: string
+
+    Maintenance:
+      type: object
+      description: A Hyperping maintenance window.
+      required:
+        - uuid
+        - name
+        - monitors
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+        title:
+          $ref: '#/components/schemas/LocalizedText'
+        text:
+          $ref: '#/components/schemas/LocalizedText'
+        start_date:
+          type: string
+          nullable: true
+        end_date:
+          type: string
+          nullable: true
+        timezone:
+          type: string
+        monitors:
+          type: array
+          items:
+            type: string
+        statuspages:
+          type: array
+          items:
+            type: string
+        bulkUuid:
+          type: string
+          nullable: true
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+        notificationOption:
+          type: string
+        notificationMinutes:
+          type: integer
+          nullable: true
+        status:
+          type: string
+        updates:
+          type: array
+          items:
+            $ref: '#/components/schemas/MaintenanceUpdate'
+
+    CreateMaintenanceRequest:
+      type: object
+      description: Request body for creating a maintenance window.
+      required:
+        - name
+        - start_date
+        - end_date
+        - monitors
+      properties:
+        name:
+          type: string
+        title:
+          $ref: '#/components/schemas/LocalizedText'
+        text:
+          $ref: '#/components/schemas/LocalizedText'
+        start_date:
+          type: string
+        end_date:
+          type: string
+        monitors:
+          type: array
+          items:
+            type: string
+        statuspages:
+          type: array
+          items:
+            type: string
+        notificationOption:
+          type: string
+        notificationMinutes:
+          type: integer
+          nullable: true
+
+    UpdateMaintenanceRequest:
+      type: object
+      description: Request body for updating a maintenance window.
+      properties:
+        name:
+          type: string
+          nullable: true
+        title:
+          $ref: '#/components/schemas/LocalizedText'
+          nullable: true
+        text:
+          $ref: '#/components/schemas/LocalizedText'
+          nullable: true
+        start_date:
+          type: string
+          nullable: true
+        end_date:
+          type: string
+          nullable: true
+        monitors:
+          type: array
+          items:
+            type: string
+          nullable: true
+        statuspages:
+          type: array
+          items:
+            type: string
+          nullable: true
+        notificationOption:
+          type: string
+          nullable: true
+        notificationMinutes:
+          type: integer
+          nullable: true
+
+    # -------------------------------------------------------------------------
+    # Healthcheck
+    # -------------------------------------------------------------------------
+
+    Healthcheck:
+      type: object
+      description: A Hyperping healthcheck (cron job monitoring).
+      required:
+        - uuid
+        - name
+        - pingUrl
+        - period
+        - gracePeriod
+        - gracePeriodValue
+        - gracePeriodType
+        - isDown
+        - isPaused
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+        pingUrl:
+          type: string
+        cron:
+          type: string
+        timezone:
+          type: string
+        tz:
+          type: string
+        periodValue:
+          type: integer
+          nullable: true
+        periodType:
+          type: string
+        period:
+          type: integer
+        gracePeriod:
+          type: integer
+        gracePeriodValue:
+          type: integer
+        gracePeriodType:
+          type: string
+        isDown:
+          type: boolean
+        isPaused:
+          type: boolean
+        lastPing:
+          type: string
+        dueDate:
+          type: string
+        createdAt:
+          type: string
+        lastLogStartDate:
+          type: string
+        lastLogEndDate:
+          type: string
+        escalationPolicy:
+          $ref: '#/components/schemas/EscalationPolicyReference'
+          nullable: true
+
+    CreateHealthcheckRequest:
+      type: object
+      description: Request body for creating a healthcheck.
+      required:
+        - name
+        - grace_period_value
+        - grace_period_type
+      properties:
+        name:
+          type: string
+        cron:
+          type: string
+          nullable: true
+        timezone:
+          type: string
+          nullable: true
+        period_value:
+          type: integer
+          nullable: true
+        period_type:
+          type: string
+          nullable: true
+        grace_period_value:
+          type: integer
+        grace_period_type:
+          type: string
+        escalation_policy:
+          type: string
+          nullable: true
+
+    UpdateHealthcheckRequest:
+      type: object
+      description: Request body for updating a healthcheck.
+      properties:
+        name:
+          type: string
+          nullable: true
+        cron:
+          type: string
+          nullable: true
+        timezone:
+          type: string
+          nullable: true
+        period_value:
+          type: integer
+          nullable: true
+        period_type:
+          type: string
+          nullable: true
+        grace_period_value:
+          type: integer
+          nullable: true
+        grace_period_type:
+          type: string
+          nullable: true
+        escalation_policy:
+          type: string
+          nullable: true
+
+    # -------------------------------------------------------------------------
+    # Outage
+    # -------------------------------------------------------------------------
+
+    AcknowledgedByUser:
+      type: object
+      description: The user who acknowledged an outage.
+      required:
+        - uuid
+        - email
+        - name
+      properties:
+        uuid:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+
+    MonitorReference:
+      type: object
+      description: Simplified monitor object included in outage responses.
+      required:
+        - uuid
+        - name
+        - url
+        - protocol
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+        protocol:
+          type: string
+
+    EscalationPolicyReference:
+      type: object
+      description: Simplified escalation policy object included in outage and healthcheck responses.
+      required:
+        - uuid
+        - name
+        - alertedSteps
+        - totalSteps
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+        alertedSteps:
+          type: integer
+        totalSteps:
+          type: integer
+
+    Outage:
+      type: object
+      description: A Hyperping outage (system-generated monitor failure).
+      required:
+        - uuid
+        - startDate
+        - durationMs
+        - statusCode
+        - description
+        - outageType
+        - isResolved
+        - detectedLocation
+        - confirmedLocations
+        - monitor
+      properties:
+        uuid:
+          type: string
+        startDate:
+          type: string
+        endDate:
+          type: string
+          nullable: true
+        durationMs:
+          type: integer
+        statusCode:
+          type: integer
+        description:
+          type: string
+        outageType:
+          type: string
+        isResolved:
+          type: boolean
+        detectedLocation:
+          type: string
+        confirmedLocations:
+          type: string
+        acknowledgedAt:
+          type: string
+          nullable: true
+        acknowledgedBy:
+          $ref: '#/components/schemas/AcknowledgedByUser'
+          nullable: true
+        monitor:
+          $ref: '#/components/schemas/MonitorReference'
+        escalationPolicy:
+          $ref: '#/components/schemas/EscalationPolicyReference'
+          nullable: true
+        severity:
+          type: string
+        summary:
+          type: string
+
+    CreateOutageRequest:
+      type: object
+      description: Request body for creating a manual outage.
+      required:
+        - monitorUuid
+        - startDate
+        - statusCode
+        - description
+        - outageType
+      properties:
+        monitorUuid:
+          type: string
+        startDate:
+          type: string
+        endDate:
+          type: string
+          nullable: true
+        statusCode:
+          type: integer
+        description:
+          type: string
+        outageType:
+          type: string
+        escalationPolicyUuid:
+          type: string
+          nullable: true
+        severity:
+          type: string
+          nullable: true
+        summary:
+          type: string
+          nullable: true
+
+    # -------------------------------------------------------------------------
+    # Reports
+    # -------------------------------------------------------------------------
+
+    ReportPeriod:
+      type: object
+      description: Time period for a monitor report.
+      required:
+        - from
+        - to
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+
+    OutageDetail:
+      type: object
+      description: Details about a specific outage in a report.
+      required:
+        - startDate
+        - endDate
+      properties:
+        startDate:
+          type: string
+        endDate:
+          type: string
+        duration:
+          type: integer
+        durationFormatted:
+          type: string
+
+    OutageStats:
+      type: object
+      description: Statistics about outages in a report.
+      required:
+        - count
+        - totalDowntime
+        - totalDowntimeFormatted
+        - longestOutage
+        - longestOutageFormatted
+        - details
+      properties:
+        count:
+          type: integer
+        totalDowntime:
+          type: integer
+        totalDowntimeFormatted:
+          type: string
+        longestOutage:
+          type: integer
+        longestOutageFormatted:
+          type: string
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutageDetail'
+
+    MonitorReport:
+      type: object
+      description: Report for a monitor.
+      required:
+        - uuid
+        - name
+        - protocol
+        - period
+        - sla
+        - outages
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+        protocol:
+          type: string
+        period:
+          $ref: '#/components/schemas/ReportPeriod'
+        sla:
+          type: number
+          format: double
+        mttr:
+          type: integer
+        mttrFormatted:
+          type: string
+        outages:
+          $ref: '#/components/schemas/OutageStats'
+
+    ListMonitorReportsResponse:
+      type: object
+      description: Paginated list of monitor reports.
+      required:
+        - period
+        - monitors
+      properties:
+        period:
+          $ref: '#/components/schemas/ReportPeriod'
+        monitors:
+          type: array
+          items:
+            $ref: '#/components/schemas/MonitorReport'
+
+    # -------------------------------------------------------------------------
+    # Status Pages
+    # -------------------------------------------------------------------------
+
+    StatusPageSettings:
+      type: object
+      description: Settings for a status page.
+      required:
+        - name
+        - languages
+        - default_language
+        - theme
+        - font
+        - accent_color
+        - auto_refresh
+        - banner_header
+        - hide_powered_by
+        - hide_from_search_engines
+        - subscribe
+        - authentication
+      properties:
+        name:
+          type: string
+        website:
+          type: string
+        description:
+          type: object
+          additionalProperties:
+            type: string
+        languages:
+          type: array
+          items:
+            type: string
+        default_language:
+          type: string
+        theme:
+          type: string
+        font:
+          type: string
+        accent_color:
+          type: string
+        auto_refresh:
+          type: boolean
+        banner_header:
+          type: boolean
+        logo:
+          type: string
+          nullable: true
+        logo_height:
+          type: string
+        favicon:
+          type: string
+          nullable: true
+        hide_powered_by:
+          type: boolean
+        hide_from_search_engines:
+          type: boolean
+        google_analytics:
+          type: string
+          nullable: true
+        subscribe:
+          type: object
+          description: Subscription settings (StatusPageSubscribeSettings)
+        authentication:
+          type: object
+          description: Authentication settings (StatusPageAuthenticationSettings)
+
+    StatusPageService:
+      type: object
+      description: A service (monitor or component) in a status page section.
+      required:
+        - name
+        - is_group
+        - show_uptime
+        - show_response_times
+      properties:
+        id:
+          type: string
+          x-go-type: "*FlexibleString"
+          nullable: true
+        uuid:
+          type: string
+        name:
+          type: object
+          additionalProperties:
+            type: string
+        is_group:
+          type: boolean
+        show_uptime:
+          type: boolean
+        show_response_times:
+          type: boolean
+        description:
+          type: object
+          additionalProperties:
+            type: string
+        services:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusPageService'
+
+    StatusPageSection:
+      type: object
+      description: A section on a status page.
+      required:
+        - name
+        - is_split
+        - services
+      properties:
+        name:
+          type: object
+          additionalProperties:
+            type: string
+        is_split:
+          type: boolean
+        services:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusPageService'
+
+    StatusPage:
+      type: object
+      description: A Hyperping status page.
+      required:
+        - uuid
+        - name
+        - hostedsubdomain
+        - url
+        - password_protected
+        - settings
+        - sections
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+        hostname:
+          type: string
+          nullable: true
+        hostedsubdomain:
+          type: string
+        url:
+          type: string
+        password_protected:
+          type: boolean
+        settings:
+          $ref: '#/components/schemas/StatusPageSettings'
+        sections:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusPageSection'
+
+    StatusPagePaginatedResponse:
+      type: object
+      description: Paginated list of status pages.
+      required:
+        - statuspages
+        - hasNextPage
+        - total
+        - page
+        - resultsPerPage
+      properties:
+        statuspages:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusPage'
+        hasNextPage:
+          type: boolean
+        total:
+          type: integer
+        page:
+          type: integer
+        resultsPerPage:
+          type: integer
+
+    CreateStatusPageRequest:
+      type: object
+      description: Request body for creating a status page.
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        subdomain:
+          type: string
+          nullable: true
+        hostname:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        languages:
+          type: array
+          items:
+            type: string
+        default_language:
+          type: string
+          nullable: true
+        theme:
+          type: string
+          nullable: true
+        font:
+          type: string
+          nullable: true
+        accent_color:
+          type: string
+          nullable: true
+        auto_refresh:
+          type: boolean
+          nullable: true
+        banner_header:
+          type: boolean
+          nullable: true
+        logo:
+          type: string
+          nullable: true
+        logo_height:
+          type: string
+          nullable: true
+        favicon:
+          type: string
+          nullable: true
+        hide_powered_by:
+          type: boolean
+          nullable: true
+        hide_from_search_engines:
+          type: boolean
+          nullable: true
+        google_analytics:
+          type: string
+          nullable: true
+        password:
+          type: string
+          nullable: true
+        subscribe:
+          type: object
+          nullable: true
+          description: Subscribe settings (CreateStatusPageSubscribeSettings)
+        authentication:
+          type: object
+          nullable: true
+          description: Authentication settings (CreateStatusPageAuthenticationSettings)
+        sections:
+          type: array
+          items:
+            type: object
+            description: CreateStatusPageSection
+
+    UpdateStatusPageRequest:
+      type: object
+      description: Request body for updating a status page.
+      properties:
+        name:
+          type: string
+          nullable: true
+        subdomain:
+          type: string
+          nullable: true
+        hostname:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        languages:
+          type: array
+          items:
+            type: string
+        default_language:
+          type: string
+          nullable: true
+        theme:
+          type: string
+          nullable: true
+        font:
+          type: string
+          nullable: true
+        accent_color:
+          type: string
+          nullable: true
+        auto_refresh:
+          type: boolean
+          nullable: true
+        banner_header:
+          type: boolean
+          nullable: true
+        logo:
+          type: string
+          nullable: true
+        logo_height:
+          type: string
+          nullable: true
+        favicon:
+          type: string
+          nullable: true
+        hide_powered_by:
+          type: boolean
+          nullable: true
+        hide_from_search_engines:
+          type: boolean
+          nullable: true
+        google_analytics:
+          type: string
+          nullable: true
+        password:
+          type: string
+          nullable: true
+        subscribe:
+          type: object
+          nullable: true
+          description: Subscribe settings (CreateStatusPageSubscribeSettings)
+        authentication:
+          type: object
+          nullable: true
+          description: Authentication settings (CreateStatusPageAuthenticationSettings)
+        sections:
+          type: array
+          items:
+            type: object
+            description: CreateStatusPageSection
+
+    # -------------------------------------------------------------------------
+    # Subscribers
+    # -------------------------------------------------------------------------
+
+    StatusPageSubscriber:
+      type: object
+      description: A subscriber to a status page.
+      required:
+        - id
+        - type
+        - value
+        - language
+        - created_at
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+        value:
+          type: string
+        language:
+          type: string
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        slack_channel:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+
+    AddSubscriberRequest:
+      type: object
+      description: Request body for adding a subscriber to a status page.
+      required:
+        - type
+      properties:
+        type:
+          type: string
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        teams_webhook_url:
+          type: string
+          nullable: true
+        language:
+          type: string
+          nullable: true
