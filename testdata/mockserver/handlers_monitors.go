@@ -5,6 +5,7 @@ package mockserver
 
 import (
 	"net/http"
+	"sort"
 
 	hyperping "github.com/develeap/hyperping-go"
 )
@@ -17,6 +18,7 @@ func registerMonitorHandlers(mux *http.ServeMux, store *mockStore) {
 			list = append(list, *m)
 		}
 		store.mu.RUnlock()
+		sort.Slice(list, func(i, j int) bool { return list[i].UUID < list[j].UUID })
 		writeJSON(w, http.StatusOK, list)
 	})
 
