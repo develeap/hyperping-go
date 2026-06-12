@@ -9,7 +9,7 @@ import (
 	hyperping "github.com/develeap/hyperping-go"
 )
 
-func registerHealthcheckHandlers(mux *http.ServeMux, store *mockStore) {
+func registerHealthcheckHandlers(mux *http.ServeMux, store *mockStore, sv *specValidator) {
 	mux.HandleFunc("GET /v2/healthchecks", func(w http.ResponseWriter, r *http.Request) {
 		store.mu.RLock()
 		list := make([]hyperping.Healthcheck, 0, len(store.healthchecks))
@@ -21,6 +21,10 @@ func registerHealthcheckHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("POST /v2/healthchecks", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "POST /v2/healthchecks"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		var req hyperping.CreateHealthcheckRequest
 		if err := decodeBody(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -65,6 +69,10 @@ func registerHealthcheckHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("PUT /v2/healthchecks/{uuid}", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "PUT /v2/healthchecks/{uuid}"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		uuid := r.PathValue("uuid")
 		store.mu.Lock()
 		hc, ok := store.healthchecks[uuid]

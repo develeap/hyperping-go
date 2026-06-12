@@ -84,9 +84,9 @@ func WithAPIKey(key string) MockOption {
 	return func(c *mockServerConfig) { c.apiKey = key }
 }
 
-// WithSchemaFile is reserved for Phase 2 spec-driven validation (blocked on GO-07).
-// Currently a no-op.
-// TODO(GO-07): replace structural validation with specValidator once openapi.yaml is present.
+// WithSchemaFile activates spec-driven JSON Schema validation for all mutation
+// operations. The path must point to an OAS 3.1 YAML file. If the file cannot
+// be loaded or any schema fails to compile, the test is aborted immediately.
 func WithSchemaFile(path string) MockOption {
 	return func(c *mockServerConfig) { c.schemaFile = path }
 }
@@ -179,8 +179,17 @@ func NewMockServer(t *testing.T, opts ...MockOption) *Server {
 		store.statusPages[sp.UUID] = &sp
 	}
 
+	var sv *specValidator
+	if cfg.schemaFile != "" {
+		var err error
+		sv, err = newSpecValidator(cfg.schemaFile)
+		if err != nil {
+			t.Fatalf("mockserver: load spec file %q: %v", cfg.schemaFile, err)
+		}
+	}
+
 	rec := &requestRecorder{}
-	mux := buildMux(store)
+	mux := buildMux(store, sv)
 	handler := authMiddleware(cfg.apiKey, recordMiddleware(rec, mux))
 
 	httpSrv := httptest.NewServer(handler)
@@ -193,14 +202,14 @@ func NewMockServer(t *testing.T, opts ...MockOption) *Server {
 }
 
 // buildMux registers all route handlers and returns the ServeMux.
-func buildMux(store *mockStore) *http.ServeMux {
+func buildMux(store *mockStore, sv *specValidator) *http.ServeMux {
 	mux := http.NewServeMux()
-	registerMonitorHandlers(mux, store)
-	registerIncidentHandlers(mux, store)
-	registerHealthcheckHandlers(mux, store)
-	registerMaintenanceHandlers(mux, store)
-	registerOutageHandlers(mux, store)
-	registerStatusPageHandlers(mux, store)
+	registerMonitorHandlers(mux, store, sv)
+	registerIncidentHandlers(mux, store, sv)
+	registerHealthcheckHandlers(mux, store, sv)
+	registerMaintenanceHandlers(mux, store, sv)
+	registerOutageHandlers(mux, store, sv)
+	registerStatusPageHandlers(mux, store, sv)
 	registerReportHandlers(mux, store)
 	return mux
 }

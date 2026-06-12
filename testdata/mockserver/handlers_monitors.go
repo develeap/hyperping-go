@@ -10,7 +10,7 @@ import (
 	hyperping "github.com/develeap/hyperping-go"
 )
 
-func registerMonitorHandlers(mux *http.ServeMux, store *mockStore) {
+func registerMonitorHandlers(mux *http.ServeMux, store *mockStore, sv *specValidator) {
 	mux.HandleFunc("GET /v1/monitors", func(w http.ResponseWriter, r *http.Request) {
 		store.mu.RLock()
 		list := make([]hyperping.Monitor, 0, len(store.monitors))
@@ -23,6 +23,10 @@ func registerMonitorHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("POST /v1/monitors", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "POST /v1/monitors"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		var req hyperping.CreateMonitorRequest
 		if err := decodeBody(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -57,6 +61,10 @@ func registerMonitorHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("PUT /v1/monitors/{uuid}", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "PUT /v1/monitors/{uuid}"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		uuid := r.PathValue("uuid")
 		store.mu.Lock()
 		m, ok := store.monitors[uuid]

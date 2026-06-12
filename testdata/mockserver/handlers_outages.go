@@ -9,7 +9,7 @@ import (
 	hyperping "github.com/develeap/hyperping-go"
 )
 
-func registerOutageHandlers(mux *http.ServeMux, store *mockStore) {
+func registerOutageHandlers(mux *http.ServeMux, store *mockStore, sv *specValidator) {
 	mux.HandleFunc("GET /v2/outages", func(w http.ResponseWriter, r *http.Request) {
 		store.mu.RLock()
 		list := make([]hyperping.Outage, 0, len(store.outages))
@@ -21,6 +21,10 @@ func registerOutageHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("POST /v2/outages", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "POST /v2/outages"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		var req hyperping.CreateOutageRequest
 		if err := decodeBody(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())

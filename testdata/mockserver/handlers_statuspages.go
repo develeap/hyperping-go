@@ -11,7 +11,7 @@ import (
 	hyperping "github.com/develeap/hyperping-go"
 )
 
-func registerStatusPageHandlers(mux *http.ServeMux, store *mockStore) {
+func registerStatusPageHandlers(mux *http.ServeMux, store *mockStore, sv *specValidator) {
 	mux.HandleFunc("GET /v2/statuspages", func(w http.ResponseWriter, r *http.Request) {
 		store.mu.RLock()
 		list := make([]hyperping.StatusPage, 0, len(store.statusPages))
@@ -30,6 +30,10 @@ func registerStatusPageHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("POST /v2/statuspages", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "POST /v2/statuspages"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		var req hyperping.CreateStatusPageRequest
 		if err := decodeBody(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -73,6 +77,10 @@ func registerStatusPageHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("PUT /v2/statuspages/{uuid}", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "PUT /v2/statuspages/{uuid}"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		uuid := r.PathValue("uuid")
 		store.mu.Lock()
 		sp, ok := store.statusPages[uuid]
@@ -136,6 +144,10 @@ func registerStatusPageHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("POST /v2/statuspages/{uuid}/subscribers", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "POST /v2/statuspages/{uuid}/subscribers"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		uuid := r.PathValue("uuid")
 		store.mu.Lock()
 		_, spOK := store.statusPages[uuid]

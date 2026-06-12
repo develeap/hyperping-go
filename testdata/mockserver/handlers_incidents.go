@@ -10,7 +10,7 @@ import (
 	hyperping "github.com/develeap/hyperping-go"
 )
 
-func registerIncidentHandlers(mux *http.ServeMux, store *mockStore) {
+func registerIncidentHandlers(mux *http.ServeMux, store *mockStore, sv *specValidator) {
 	mux.HandleFunc("GET /v3/incidents", func(w http.ResponseWriter, r *http.Request) {
 		store.mu.RLock()
 		list := make([]hyperping.Incident, 0, len(store.incidents))
@@ -22,6 +22,10 @@ func registerIncidentHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("POST /v3/incidents", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "POST /v3/incidents"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		var req hyperping.CreateIncidentRequest
 		if err := decodeBody(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -63,6 +67,10 @@ func registerIncidentHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("PUT /v3/incidents/{uuid}", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "PUT /v3/incidents/{uuid}"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		uuid := r.PathValue("uuid")
 		store.mu.Lock()
 		inc, ok := store.incidents[uuid]
@@ -107,6 +115,10 @@ func registerIncidentHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("POST /v3/incidents/{uuid}/updates", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "POST /v3/incidents/{uuid}/updates"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		uuid := r.PathValue("uuid")
 		store.mu.Lock()
 		inc, ok := store.incidents[uuid]

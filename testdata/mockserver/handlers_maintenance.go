@@ -9,7 +9,7 @@ import (
 	hyperping "github.com/develeap/hyperping-go"
 )
 
-func registerMaintenanceHandlers(mux *http.ServeMux, store *mockStore) {
+func registerMaintenanceHandlers(mux *http.ServeMux, store *mockStore, sv *specValidator) {
 	mux.HandleFunc("GET /v1/maintenance-windows", func(w http.ResponseWriter, r *http.Request) {
 		store.mu.RLock()
 		list := make([]hyperping.Maintenance, 0, len(store.maintenance))
@@ -21,6 +21,10 @@ func registerMaintenanceHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("POST /v1/maintenance-windows", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "POST /v1/maintenance-windows"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		var req hyperping.CreateMaintenanceRequest
 		if err := decodeBody(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -58,6 +62,10 @@ func registerMaintenanceHandlers(mux *http.ServeMux, store *mockStore) {
 	})
 
 	mux.HandleFunc("PUT /v1/maintenance-windows/{uuid}", func(w http.ResponseWriter, r *http.Request) {
+		if err := validateBodySchema(r, sv, "PUT /v1/maintenance-windows/{uuid}"); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		uuid := r.PathValue("uuid")
 		store.mu.Lock()
 		mw, ok := store.maintenance[uuid]
