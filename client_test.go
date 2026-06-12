@@ -5,6 +5,7 @@ package hyperping
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -314,9 +315,9 @@ func TestClient_doRequest_ValidationError(t *testing.T) {
 		t.Errorf("expected validation error, got %v", err)
 	}
 
-	apiErr, ok := err.(*APIError)
-	if !ok {
-		t.Fatalf("expected *APIError, got %T", err)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError in chain, got %T", err)
 	}
 	if len(apiErr.Details) != 1 {
 		t.Errorf("expected 1 validation detail, got %d", len(apiErr.Details))
@@ -819,7 +820,11 @@ func TestParseErrorResponse_ValidJSON(t *testing.T) {
 	c := NewClient("test_key")
 
 	body := []byte(`{"error": "Not Found", "message": "Resource does not exist"}`)
-	apiErr := c.parseErrorResponse(404, http.Header{}, body)
+	rawErr := c.parseErrorResponse(404, http.Header{}, body, "")
+	var apiErr *APIError
+	if !errors.As(rawErr, &apiErr) {
+		t.Fatalf("expected *APIError in chain, got %T", rawErr)
+	}
 
 	if apiErr.StatusCode != 404 {
 		t.Errorf("StatusCode = %d, expected 404", apiErr.StatusCode)
@@ -833,7 +838,11 @@ func TestParseErrorResponse_InvalidJSON(t *testing.T) {
 	c := NewClient("test_key")
 
 	body := []byte(`not valid json`)
-	apiErr := c.parseErrorResponse(500, http.Header{}, body)
+	rawErr := c.parseErrorResponse(500, http.Header{}, body, "")
+	var apiErr *APIError
+	if !errors.As(rawErr, &apiErr) {
+		t.Fatalf("expected *APIError in chain, got %T", rawErr)
+	}
 
 	if apiErr.StatusCode != 500 {
 		t.Errorf("StatusCode = %d, expected 500", apiErr.StatusCode)
@@ -848,7 +857,11 @@ func TestParseErrorResponse_ErrorFieldOnly(t *testing.T) {
 	c := NewClient("test_key")
 
 	body := []byte(`{"error": "Something went wrong"}`)
-	apiErr := c.parseErrorResponse(400, http.Header{}, body)
+	rawErr := c.parseErrorResponse(400, http.Header{}, body, "")
+	var apiErr *APIError
+	if !errors.As(rawErr, &apiErr) {
+		t.Fatalf("expected *APIError in chain, got %T", rawErr)
+	}
 
 	if apiErr.Message != "Something went wrong" {
 		t.Errorf("Message = %q, expected 'Something went wrong'", apiErr.Message)
@@ -859,7 +872,11 @@ func TestParseErrorResponse_MessageFieldOnly(t *testing.T) {
 	c := NewClient("test_key")
 
 	body := []byte(`{"message": "Detailed error message"}`)
-	apiErr := c.parseErrorResponse(400, http.Header{}, body)
+	rawErr := c.parseErrorResponse(400, http.Header{}, body, "")
+	var apiErr *APIError
+	if !errors.As(rawErr, &apiErr) {
+		t.Fatalf("expected *APIError in chain, got %T", rawErr)
+	}
 
 	if apiErr.Message != "Detailed error message" {
 		t.Errorf("Message = %q, expected 'Detailed error message'", apiErr.Message)
@@ -870,7 +887,11 @@ func TestParseErrorResponse_BothFieldsSame(t *testing.T) {
 	c := NewClient("test_key")
 
 	body := []byte(`{"error": "Same message", "message": "Same message"}`)
-	apiErr := c.parseErrorResponse(400, http.Header{}, body)
+	rawErr := c.parseErrorResponse(400, http.Header{}, body, "")
+	var apiErr *APIError
+	if !errors.As(rawErr, &apiErr) {
+		t.Fatalf("expected *APIError in chain, got %T", rawErr)
+	}
 
 	// When both are the same, should use message field
 	if apiErr.Message != "Same message" {
@@ -889,7 +910,11 @@ func TestParseErrorResponse_WithDetails(t *testing.T) {
 			{"field": "frequency", "message": "Must be a positive integer"}
 		]
 	}`)
-	apiErr := c.parseErrorResponse(400, http.Header{}, body)
+	rawErr := c.parseErrorResponse(400, http.Header{}, body, "")
+	var apiErr *APIError
+	if !errors.As(rawErr, &apiErr) {
+		t.Fatalf("expected *APIError in chain, got %T", rawErr)
+	}
 
 	if len(apiErr.Details) != 2 {
 		t.Fatalf("expected 2 details, got %d", len(apiErr.Details))
@@ -906,7 +931,11 @@ func TestParseErrorResponse_EmptyBody(t *testing.T) {
 	c := NewClient("test_key")
 
 	body := []byte(``)
-	apiErr := c.parseErrorResponse(503, http.Header{}, body)
+	rawErr := c.parseErrorResponse(503, http.Header{}, body, "")
+	var apiErr *APIError
+	if !errors.As(rawErr, &apiErr) {
+		t.Fatalf("expected *APIError in chain, got %T", rawErr)
+	}
 
 	if apiErr.StatusCode != 503 {
 		t.Errorf("StatusCode = %d, expected 503", apiErr.StatusCode)
@@ -1681,5 +1710,174 @@ func TestValidateBaseURL_RejectsUserinfo(t *testing.T) {
 				t.Fatalf("expected no error for %q, got %v", tt.baseURL, err)
 			}
 		})
+	}
+}
+
+// ---- Typed error integration tests (GO-11) ----
+
+func TestClient_doRequest_TypedError_RateLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "req-rl-001")
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]string{"error": "rate limit exceeded"})
+	}))
+	defer server.Close()
+
+	c := NewClient("test_key", WithBaseURL(server.URL), WithMaxRetries(0), WithNoCircuitBreaker())
+
+	err := c.doRequest(context.Background(), "GET", "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	var rle *HyperpingRateLimitError
+	if !errors.As(err, &rle) {
+		t.Fatalf("expected *HyperpingRateLimitError, got %T: %v", err, err)
+	}
+	if rle.RequestID != "req-rl-001" {
+		t.Errorf("RequestID = %q, want %q", rle.RequestID, "req-rl-001")
+	}
+	if rle.RetryAfter != 30 {
+		t.Errorf("RetryAfter = %d, want 30", rle.RetryAfter)
+	}
+	if !errors.Is(err, ErrRateLimited) {
+		t.Error("errors.Is(ErrRateLimited) must succeed")
+	}
+}
+
+func TestClient_doRequest_TypedError_Auth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "req-auth-002")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+	}))
+	defer server.Close()
+
+	c := NewClient("test_key", WithBaseURL(server.URL), WithMaxRetries(0), WithNoCircuitBreaker())
+
+	err := c.doRequest(context.Background(), "GET", "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	var ae *HyperpingAuthError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *HyperpingAuthError, got %T: %v", err, err)
+	}
+	if ae.RequestID != "req-auth-002" {
+		t.Errorf("RequestID = %q, want %q", ae.RequestID, "req-auth-002")
+	}
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Error("errors.Is(ErrUnauthorized) must succeed")
+	}
+}
+
+func TestClient_doRequest_TypedError_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "req-nf-003")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+	}))
+	defer server.Close()
+
+	c := NewClient("test_key", WithBaseURL(server.URL), WithMaxRetries(0), WithNoCircuitBreaker())
+
+	err := c.doRequest(context.Background(), "GET", "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	var nfe *HyperpingNotFoundError
+	if !errors.As(err, &nfe) {
+		t.Fatalf("expected *HyperpingNotFoundError, got %T: %v", err, err)
+	}
+	if nfe.RequestID != "req-nf-003" {
+		t.Errorf("RequestID = %q, want %q", nfe.RequestID, "req-nf-003")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Error("errors.Is(ErrNotFound) must succeed")
+	}
+}
+
+func TestClient_doRequest_TypedError_Validation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "req-val-004")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   "validation failed",
+			"details": []map[string]string{{"field": "url", "message": "invalid URL"}},
+		})
+	}))
+	defer server.Close()
+
+	c := NewClient("test_key", WithBaseURL(server.URL), WithMaxRetries(0), WithNoCircuitBreaker())
+
+	err := c.doRequest(context.Background(), "GET", "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	var ve *HyperpingValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected *HyperpingValidationError, got %T: %v", err, err)
+	}
+	if ve.RequestID != "req-val-004" {
+		t.Errorf("RequestID = %q, want %q", ve.RequestID, "req-val-004")
+	}
+	if len(ve.Details) != 1 || ve.Details[0].Field != "url" {
+		t.Errorf("Details = %v, unexpected", ve.Details)
+	}
+	if !errors.Is(err, ErrValidation) {
+		t.Error("errors.Is(ErrValidation) must succeed")
+	}
+}
+
+func TestClient_doRequest_TypedError_NoRequestID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// No X-Request-Id header set
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+	}))
+	defer server.Close()
+
+	c := NewClient("test_key", WithBaseURL(server.URL), WithMaxRetries(0), WithNoCircuitBreaker())
+
+	err := c.doRequest(context.Background(), "GET", "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	var nfe *HyperpingNotFoundError
+	if !errors.As(err, &nfe) {
+		t.Fatalf("expected *HyperpingNotFoundError, got %T: %v", err, err)
+	}
+	if nfe.RequestID != "" {
+		t.Errorf("RequestID should be empty when header absent, got %q", nfe.RequestID)
+	}
+}
+
+func TestClient_doRequest_TypedError_ServerError_IsAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "req-srv-005")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
+	}))
+	defer server.Close()
+
+	c := NewClient("test_key", WithBaseURL(server.URL), WithMaxRetries(0), WithNoCircuitBreaker())
+
+	err := c.doRequest(context.Background(), "GET", "/test", nil, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	// 5xx: no typed wrapper, returns *APIError directly
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *APIError for 500, got %T: %v", err, err)
+	}
+	if !errors.Is(err, ErrServerError) {
+		t.Error("errors.Is(ErrServerError) must succeed")
 	}
 }

@@ -6,6 +6,8 @@ package hyperping
 import (
 	"errors"
 	"testing"
+	"strings"
+	"net/http"
 )
 
 func TestAPIError_Error(t *testing.T) {
@@ -814,5 +816,131 @@ func TestSanitizeMessage(t *testing.T) {
 				t.Errorf("sanitizeMessage(%q) = %q, expected %q", tt.input, got, tt.expected)
 			}
 		})
+	}
+}
+
+// ---- Typed error unit tests (GO-11) ----
+
+func TestHyperpingRateLimitError(t *testing.T) {
+	apiErr := &APIError{StatusCode: http.StatusTooManyRequests, Message: "rate limit exceeded", RetryAfter: 60}
+	e := &HyperpingRateLimitError{RequestID: "req-rl-001", RetryAfter: 60, apiError: apiErr}
+
+	if !strings.Contains(e.Error(), "429") {
+		t.Errorf("Error() should contain status code, got %q", e.Error())
+	}
+	if e.RequestID != "req-rl-001" {
+		t.Errorf("RequestID = %q, want %q", e.RequestID, "req-rl-001")
+	}
+	if e.RetryAfter != 60 {
+		t.Errorf("RetryAfter = %d, want 60", e.RetryAfter)
+	}
+
+	// errors.As to typed error
+	var rle *HyperpingRateLimitError
+	if !errors.As(e, &rle) {
+		t.Fatal("errors.As to *HyperpingRateLimitError must succeed")
+	}
+	// errors.As finds *APIError via Unwrap chain
+	var ae *APIError
+	if !errors.As(e, &ae) {
+		t.Fatal("errors.As to *APIError must succeed via Unwrap chain")
+	}
+	if ae.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("unwrapped APIError.StatusCode = %d, want 429", ae.StatusCode)
+	}
+	// errors.Is sentinel backward compat
+	if !errors.Is(e, ErrRateLimited) {
+		t.Error("errors.Is(ErrRateLimited) must succeed")
+	}
+}
+
+func TestHyperpingAuthError(t *testing.T) {
+	apiErr := &APIError{StatusCode: http.StatusUnauthorized, Message: "unauthorized"}
+	e := &HyperpingAuthError{RequestID: "req-auth-002", apiError: apiErr}
+
+	if !strings.Contains(e.Error(), "401") {
+		t.Errorf("Error() should contain status code, got %q", e.Error())
+	}
+	if e.RequestID != "req-auth-002" {
+		t.Errorf("RequestID = %q, want %q", e.RequestID, "req-auth-002")
+	}
+
+	var ae *HyperpingAuthError
+	if !errors.As(e, &ae) {
+		t.Fatal("errors.As to *HyperpingAuthError must succeed")
+	}
+	var apiE *APIError
+	if !errors.As(e, &apiE) {
+		t.Fatal("errors.As to *APIError must succeed via Unwrap chain")
+	}
+	if !errors.Is(e, ErrUnauthorized) {
+		t.Error("errors.Is(ErrUnauthorized) must succeed")
+	}
+}
+
+func TestHyperpingNotFoundError(t *testing.T) {
+	apiErr := &APIError{StatusCode: http.StatusNotFound, Message: "not found"}
+	e := &HyperpingNotFoundError{RequestID: "req-nf-003", apiError: apiErr}
+
+	if !strings.Contains(e.Error(), "404") {
+		t.Errorf("Error() should contain status code, got %q", e.Error())
+	}
+	if e.RequestID != "req-nf-003" {
+		t.Errorf("RequestID = %q, want %q", e.RequestID, "req-nf-003")
+	}
+
+	var nfe *HyperpingNotFoundError
+	if !errors.As(e, &nfe) {
+		t.Fatal("errors.As to *HyperpingNotFoundError must succeed")
+	}
+	var apiE *APIError
+	if !errors.As(e, &apiE) {
+		t.Fatal("errors.As to *APIError must succeed via Unwrap chain")
+	}
+	if !errors.Is(e, ErrNotFound) {
+		t.Error("errors.Is(ErrNotFound) must succeed")
+	}
+}
+
+func TestHyperpingValidationError(t *testing.T) {
+	apiErr := &APIError{
+		StatusCode: http.StatusUnprocessableEntity,
+		Message:    "validation failed",
+		Details:    []ValidationDetail{{Field: "url", Message: "invalid URL"}},
+	}
+	e := &HyperpingValidationError{
+		RequestID: "req-val-004",
+		Details:   apiErr.Details,
+		apiError:  apiErr,
+	}
+
+	if !strings.Contains(e.Error(), "422") {
+		t.Errorf("Error() should contain status code, got %q", e.Error())
+	}
+	if e.RequestID != "req-val-004" {
+		t.Errorf("RequestID = %q, want %q", e.RequestID, "req-val-004")
+	}
+	if len(e.Details) != 1 || e.Details[0].Field != "url" {
+		t.Errorf("Details = %v, unexpected", e.Details)
+	}
+
+	var ve *HyperpingValidationError
+	if !errors.As(e, &ve) {
+		t.Fatal("errors.As to *HyperpingValidationError must succeed")
+	}
+	var apiE *APIError
+	if !errors.As(e, &apiE) {
+		t.Fatal("errors.As to *APIError must succeed via Unwrap chain")
+	}
+	if !errors.Is(e, ErrValidation) {
+		t.Error("errors.Is(ErrValidation) must succeed")
+	}
+}
+
+func TestTypedErrors_NilRequestID(t *testing.T) {
+	apiErr := &APIError{StatusCode: http.StatusNotFound, Message: "not found"}
+	e := &HyperpingNotFoundError{RequestID: "", apiError: apiErr}
+	if e.RequestID != "" {
+		t.Errorf("empty RequestID should be preserved, got %q", e.RequestID)
 	}
 }
