@@ -501,33 +501,63 @@ func (c *MCPClient) SearchMonitorsByName(ctx context.Context, query string) ([]M
 
 // CreateMonitor creates a new monitor
 func (c *MCPClient) CreateMonitor(ctx context.Context, req MCPCreateMonitorRequest) (*MonitorDetails, error) {
-	args := map[string]any{}
-	if req.Name != "" {
-		args["name"] = req.Name
+	args := map[string]any{
+		"name": req.Name,
+		"url":  req.URL,
 	}
-	if req.URL != "" {
-		args["url"] = req.URL
+	if req.Protocol != nil {
+		args["protocol"] = *req.Protocol
 	}
-	if req.Method != "" {
-		args["method"] = req.Method
+	if req.Port != nil {
+		args["port"] = *req.Port
 	}
-	if req.Frequency > 0 {
-		args["frequency"] = req.Frequency
-	}
-	if req.ExpectedStatus > 0 {
-		args["expected_status"] = req.ExpectedStatus
+	if req.HTTPMethod != nil {
+		args["http_method"] = *req.HTTPMethod
 	}
 	if len(req.Regions) > 0 {
 		args["regions"] = req.Regions
 	}
-	if req.Keyword != "" {
-		args["keyword"] = req.Keyword
+	if req.CheckFrequency != nil {
+		args["check_frequency"] = *req.CheckFrequency
 	}
-	if len(req.Headers) > 0 {
-		args["headers"] = req.Headers
+	if req.FollowRedirects != nil {
+		args["follow_redirects"] = *req.FollowRedirects
 	}
-	if req.EscalationPolicy != "" {
-		args["escalation_policy"] = req.EscalationPolicy
+	if req.Timeout != nil {
+		args["timeout"] = *req.Timeout
+	}
+	if req.ExpectedStatusCode != nil {
+		args["expected_status_code"] = *req.ExpectedStatusCode
+	}
+	if req.RequestBody != nil {
+		args["request_body"] = *req.RequestBody
+	}
+	if len(req.RequestHeaders) > 0 {
+		args["request_headers"] = req.RequestHeaders
+	}
+	if req.RequiredKeyword != nil {
+		args["required_keyword"] = *req.RequiredKeyword
+	}
+	if req.Paused != nil {
+		args["paused"] = *req.Paused
+	}
+	if req.AlertsWait != nil {
+		args["alerts_wait"] = *req.AlertsWait
+	}
+	if req.DNSRecordType != nil {
+		args["dns_record_type"] = *req.DNSRecordType
+	}
+	if req.DNSNameserver != nil {
+		args["dns_nameserver"] = *req.DNSNameserver
+	}
+	if req.DNSExpectedAnswer != nil {
+		args["dns_expected_answer"] = *req.DNSExpectedAnswer
+	}
+	if req.EscalationPolicy != nil {
+		args["escalation_policy"] = *req.EscalationPolicy
+	}
+	if req.GroupID != nil {
+		args["group_id"] = req.GroupID
 	}
 
 	result, err := c.transport.CallTool(ctx, "create_monitor", args)
@@ -550,32 +580,65 @@ func (c *MCPClient) CreateMonitor(ctx context.Context, req MCPCreateMonitorReque
 // UpdateMonitor updates an existing monitor
 func (c *MCPClient) UpdateMonitor(ctx context.Context, uuid string, req MCPUpdateMonitorRequest) (*MonitorDetails, error) {
 	args := map[string]any{"uuid": uuid}
-	if req.Name != "" {
-		args["name"] = req.Name
+	if req.Name != nil {
+		args["name"] = *req.Name
 	}
-	if req.URL != "" {
-		args["url"] = req.URL
+	if req.URL != nil {
+		args["url"] = *req.URL
 	}
-	if req.Method != "" {
-		args["method"] = req.Method
+	if req.Protocol != nil {
+		args["protocol"] = *req.Protocol
 	}
-	if req.Frequency > 0 {
-		args["frequency"] = req.Frequency
+	if req.Port != nil {
+		args["port"] = *req.Port
 	}
-	if req.ExpectedStatus > 0 {
-		args["expected_status"] = req.ExpectedStatus
+	if req.HTTPMethod != nil {
+		args["http_method"] = *req.HTTPMethod
 	}
 	if len(req.Regions) > 0 {
 		args["regions"] = req.Regions
 	}
-	if req.Keyword != "" {
-		args["keyword"] = req.Keyword
+	if req.CheckFrequency != nil {
+		args["check_frequency"] = *req.CheckFrequency
 	}
-	if len(req.Headers) > 0 {
-		args["headers"] = req.Headers
+	if req.FollowRedirects != nil {
+		args["follow_redirects"] = *req.FollowRedirects
 	}
-	if req.EscalationPolicy != "" {
-		args["escalation_policy"] = req.EscalationPolicy
+	if req.Timeout != nil {
+		args["timeout"] = *req.Timeout
+	}
+	if req.ExpectedStatusCode != nil {
+		args["expected_status_code"] = *req.ExpectedStatusCode
+	}
+	if req.RequestBody != nil {
+		args["request_body"] = *req.RequestBody
+	}
+	if len(req.RequestHeaders) > 0 {
+		args["request_headers"] = req.RequestHeaders
+	}
+	if req.RequiredKeyword != nil {
+		args["required_keyword"] = *req.RequiredKeyword
+	}
+	if req.Paused != nil {
+		args["paused"] = *req.Paused
+	}
+	if req.AlertsWait != nil {
+		args["alerts_wait"] = *req.AlertsWait
+	}
+	if req.DNSRecordType != nil {
+		args["dns_record_type"] = *req.DNSRecordType
+	}
+	if req.DNSNameserver != nil {
+		args["dns_nameserver"] = *req.DNSNameserver
+	}
+	if req.DNSExpectedAnswer != nil {
+		args["dns_expected_answer"] = *req.DNSExpectedAnswer
+	}
+	if req.EscalationPolicy != nil {
+		args["escalation_policy"] = *req.EscalationPolicy
+	}
+	if req.GroupID != nil {
+		args["group_id"] = req.GroupID
 	}
 
 	result, err := c.transport.CallTool(ctx, "update_monitor", args)
@@ -604,6 +667,15 @@ func (c *MCPClient) PauseMonitor(ctx context.Context, uuid string) error {
 // ResumeMonitor resumes a paused monitor
 func (c *MCPClient) ResumeMonitor(ctx context.Context, uuid string) error {
 	_, err := c.transport.CallTool(ctx, "resume_monitor", map[string]any{"uuid": uuid})
+	return err
+}
+
+// DeleteMonitor deletes a monitor by UUID.
+// Note: the MCP server's tools/list does not currently include delete_monitor
+// (verified 2026-06-12). This method follows the pause/resume pattern and
+// will work once the server adds the tool.
+func (c *MCPClient) DeleteMonitor(ctx context.Context, uuid string) error {
+	_, err := c.transport.CallTool(ctx, "delete_monitor", map[string]any{"uuid": uuid})
 	return err
 }
 

@@ -339,28 +339,66 @@ type MonitorDetails struct {
 
 // ==================== Write Request Models ====================
 
-type MCPCreateMonitorRequest struct {
-	Name            string            `json:"name"`
-	URL             string            `json:"url,omitempty"`
-	Method          string            `json:"method,omitempty"` // HTTP, ICMP, PORT, DNS
-	Frequency       int               `json:"frequency,omitempty"` // seconds (10s to 24h)
-	ExpectedStatus  int               `json:"expected_status,omitempty"`
-	Regions         []string         `json:"regions,omitempty"`
-	Keyword         string            `json:"keyword,omitempty"`
-	Headers         map[string]string `json:"headers,omitempty"`
-	EscalationPolicy string           `json:"escalation_policy,omitempty"`
+// MCPRequestHeader is a single custom HTTP header sent with an MCP
+// create_monitor or update_monitor request. The server declares this
+// as an array of {name, value} objects under the request_headers arg.
+type MCPRequestHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
+// MCPCreateMonitorRequest carries arguments for the MCP create_monitor tool.
+// Field names and types match the server's inputSchema exactly. Required
+// fields are Name and URL; all others are pointer types so nil values are
+// omitted from the args map and the server applies its own defaults.
+type MCPCreateMonitorRequest struct {
+	Name               string             `json:"name"`
+	URL                string             `json:"url"`
+	Protocol           *string            `json:"protocol,omitempty"`           // "http", "icmp", "port", "dns"
+	Port               *int               `json:"port,omitempty"`               // required when protocol="port"
+	HTTPMethod         *string            `json:"http_method,omitempty"`         // "GET", "POST", etc.
+	Regions            []string           `json:"regions,omitempty"`
+	CheckFrequency     *float64           `json:"check_frequency,omitempty"`     // seconds
+	FollowRedirects    *bool              `json:"follow_redirects,omitempty"`
+	Timeout            *int               `json:"timeout,omitempty"`             // 1-60 seconds
+	ExpectedStatusCode *string            `json:"expected_status_code,omitempty"` // "200", "2xx", "1xx-3xx"
+	RequestBody        *string            `json:"request_body,omitempty"`
+	RequestHeaders     []MCPRequestHeader `json:"request_headers,omitempty"`
+	RequiredKeyword    *string            `json:"required_keyword,omitempty"`
+	Paused             *bool              `json:"paused,omitempty"`
+	AlertsWait         *float64           `json:"alerts_wait,omitempty"`         // minutes; -1 disables, 0 is immediate
+	DNSRecordType      *string            `json:"dns_record_type,omitempty"`
+	DNSNameserver      *string            `json:"dns_nameserver,omitempty"`
+	DNSExpectedAnswer  *string            `json:"dns_expected_answer,omitempty"`
+	EscalationPolicy   *string            `json:"escalation_policy,omitempty"`
+	GroupID            any                `json:"group_id,omitempty"` // int or string
+}
+
+// MCPUpdateMonitorRequest carries arguments for the MCP update_monitor tool.
+// The UUID is passed as a separate method argument, not embedded here. All
+// fields are optional; nil values are omitted so only explicitly changed
+// fields reach the server.
 type MCPUpdateMonitorRequest struct {
-	Name            string            `json:"name,omitempty"`
-	URL             string            `json:"url,omitempty"`
-	Method          string            `json:"method,omitempty"`
-	Frequency       int               `json:"frequency,omitempty"`
-	ExpectedStatus  int               `json:"expected_status,omitempty"`
-	Regions         []string         `json:"regions,omitempty"`
-	Keyword         string            `json:"keyword,omitempty"`
-	Headers         map[string]string `json:"headers,omitempty"`
-	EscalationPolicy string           `json:"escalation_policy,omitempty"`
+	Name               *string            `json:"name,omitempty"`
+	URL                *string            `json:"url,omitempty"`
+	Protocol           *string            `json:"protocol,omitempty"`
+	Port               *int               `json:"port,omitempty"`
+	HTTPMethod         *string            `json:"http_method,omitempty"`
+	Regions            []string           `json:"regions,omitempty"`
+	CheckFrequency     *float64           `json:"check_frequency,omitempty"`
+	FollowRedirects    *bool              `json:"follow_redirects,omitempty"`
+	Timeout            *int               `json:"timeout,omitempty"`
+	ExpectedStatusCode *string            `json:"expected_status_code,omitempty"`
+	RequestBody        *string            `json:"request_body,omitempty"`
+	RequestHeaders     []MCPRequestHeader `json:"request_headers,omitempty"`
+	RequiredKeyword    *string            `json:"required_keyword,omitempty"`
+	Paused             *bool              `json:"paused,omitempty"`
+	AlertsWait         *float64           `json:"alerts_wait,omitempty"`
+	DNSRecordType      *string            `json:"dns_record_type,omitempty"`
+	DNSNameserver      *string            `json:"dns_nameserver,omitempty"`
+	DNSExpectedAnswer  *string            `json:"dns_expected_answer,omitempty"`
+	EscalationPolicy   *string            `json:"escalation_policy,omitempty"`
+	GroupID            any                `json:"group_id,omitempty"`
 }
 
 // ==================== Monitor Models (MCP-specific) ====================
