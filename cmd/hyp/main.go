@@ -3,6 +3,8 @@
 
 package main
 
+import "os"
+
 var (
 	version = "dev"
 	commit  = "none"
@@ -11,5 +13,7 @@ var (
 
 func main() {
 	root := newRootCmd(version, commit, date)
-	root.Execute()
+	if err := root.Execute(); err != nil {
+		os.Exit(1)
+	}
 }
