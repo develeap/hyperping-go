@@ -16,6 +16,7 @@ type StatusPage struct {
 	HostedSubdomain   string              `json:"hostedsubdomain"` // e.g., "mycompany.hyperping.app"
 	URL               string              `json:"url"`             // active URL
 	PasswordProtected bool                `json:"password_protected"`
+	Monitors          []string            `json:"monitors,omitempty"`
 	Settings          StatusPageSettings  `json:"settings"`
 	Sections          []StatusPageSection `json:"sections"`
 }
@@ -205,4 +206,5 @@ type UpdateStatusPageRequest struct {
 	Subscribe             *CreateStatusPageSubscribeSettings      `json:"subscribe,omitempty"`
 	Authentication        *CreateStatusPageAuthenticationSettings `json:"authentication,omitempty"`
 	Sections              []CreateStatusPageSection               `json:"sections,omitempty"`
+	Monitors              []string                                `json:"monitors,omitempty"`
 }
