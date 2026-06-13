@@ -611,6 +611,45 @@ func TestCreateOutageRequest_SeverityAndSummary_Marshal(t *testing.T) {
 	})
 }
 
+func TestUpdateStatusPageRequest_MonitorsJSON(t *testing.T) {
+	t.Run("serializes monitors array", func(t *testing.T) {
+		req := UpdateStatusPageRequest{Monitors: []string{"uuid1", "uuid2"}}
+		b, err := json.Marshal(req)
+		if err != nil {
+			t.Fatalf("marshal error: %v", err)
+		}
+		if !strings.Contains(string(b), `"monitors":["uuid1","uuid2"]`) {
+			t.Errorf("expected monitors in output, got: %s", string(b))
+		}
+	})
+
+	t.Run("omits monitors when nil", func(t *testing.T) {
+		req := UpdateStatusPageRequest{}
+		b, err := json.Marshal(req)
+		if err != nil {
+			t.Fatalf("marshal error: %v", err)
+		}
+		if strings.Contains(string(b), "monitors") {
+			t.Errorf("expected monitors to be omitted when nil, got: %s", string(b))
+		}
+	})
+
+	t.Run("round-trips monitors", func(t *testing.T) {
+		req := UpdateStatusPageRequest{Monitors: []string{"uuid1", "uuid2"}}
+		b, err := json.Marshal(req)
+		if err != nil {
+			t.Fatalf("marshal error: %v", err)
+		}
+		var got UpdateStatusPageRequest
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("unmarshal error: %v", err)
+		}
+		if len(got.Monitors) != 2 || got.Monitors[0] != "uuid1" || got.Monitors[1] != "uuid2" {
+			t.Errorf("expected [uuid1 uuid2], got: %v", got.Monitors)
+		}
+	})
+}
+
 func TestCreateStatusPageService_Description_JSON(t *testing.T) {
 	t.Run("nil omits field", func(t *testing.T) {
 		svc := CreateStatusPageService{}

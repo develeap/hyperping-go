@@ -18,6 +18,7 @@ type StatusPage struct {
 	PasswordProtected bool                `json:"password_protected"`
 	Settings          StatusPageSettings  `json:"settings"`
 	Sections          []StatusPageSection `json:"sections"`
+	Monitors          []string            `json:"monitors,omitempty"`
 }
 
 // StatusPageSettings represents the settings for a status page.
@@ -205,4 +206,5 @@ type UpdateStatusPageRequest struct {
 	Subscribe             *CreateStatusPageSubscribeSettings      `json:"subscribe,omitempty"`
 	Authentication        *CreateStatusPageAuthenticationSettings `json:"authentication,omitempty"`
 	Sections              []CreateStatusPageSection               `json:"sections,omitempty"`
+	Monitors              []string                                `json:"monitors,omitempty"`
 }
