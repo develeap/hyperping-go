@@ -1,5 +1,3 @@
-//go:build tracing
-
 // Copyright (c) 2026 Develeap
 // SPDX-License-Identifier: MIT
 
