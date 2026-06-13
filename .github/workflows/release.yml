@@ -128,3 +128,8 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --notes "${{ steps.changelog.outputs.notes }}" \
             --verify-tag
+
+      - name: Upload OpenAPI spec
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" openapi.yaml --clobber

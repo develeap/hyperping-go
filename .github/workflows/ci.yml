@@ -174,3 +174,23 @@ jobs:
         run: |
           export GOTOOLCHAIN=auto
           go build -trimpath -ldflags="-s -w" -o /dev/null ./...
+
+  spec-lint:
+    name: OpenAPI spec lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+
+      - name: Install linters
+        run: npm install --no-save @redocly/cli@latest @stoplight/spectral-cli@latest
+
+      - name: Redocly lint
+        run: npx redocly lint openapi.yaml
+
+      - name: Spectral lint
+        run: npx spectral lint openapi.yaml --ruleset .spectral.yaml

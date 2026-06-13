@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // Schema-contract test.
@@ -257,6 +258,88 @@ func outputShapeCases() []outputShapeCase {
 				return out
 			},
 		},
+	}
+}
+
+// TestSchemaContract_SpecFieldsMatchGoTypes asserts that for the core model
+// types, every JSON field name present in the Go struct tags also appears as a
+// property key in the OpenAPI spec schema. This catches drift when a Go struct
+// field is renamed without updating openapi.yaml.
+//
+// The table below is hand-maintained; update it when adding or renaming json
+// tags on the listed types.
+func TestSchemaContract_SpecFieldsMatchGoTypes(t *testing.T) {
+	type schemaCase struct {
+		schema string
+		fields []string
+	}
+	cases := []schemaCase{
+		{
+			schema: "Monitor",
+			// Fields from Monitor struct json tags (excluding json:"-").
+			// escalation_policy comes from monitorWire but is the wire field the spec
+			// documents; include it so a rename surfaces here.
+			fields: []string{
+				"id", "uuid", "name", "url", "protocol", "projectUuid",
+				"http_method", "regions", "check_frequency", "request_headers",
+				"request_body", "follow_redirects", "expected_status_code",
+				"required_keyword", "paused", "port", "alerts_wait",
+				"dns_record_type", "dns_nameserver", "dns_expected_answer",
+				"status", "ssl_expiration", "escalation_policy",
+			},
+		},
+		{
+			schema: "Incident",
+			fields: []string{
+				"uuid", "date", "title", "text", "type",
+				"affectedComponents", "statuspages", "updates",
+			},
+		},
+		{
+			schema: "Outage",
+			fields: []string{
+				"uuid", "startDate", "endDate", "durationMs", "statusCode",
+				"description", "outageType", "isResolved", "detectedLocation",
+				"confirmedLocations", "acknowledgedAt", "acknowledgedBy",
+				"monitor", "escalationPolicy", "severity", "summary",
+			},
+		},
+		{
+			schema: "TeamMember",
+			fields: []string{
+				"uuid", "email", "name", "phone",
+				"profilePictureUrl", "ssoPictureUrl", "accountRole",
+			},
+		},
+		{
+			schema: "AlertHistory",
+			fields: []string{
+				"timeGroups", "totalAlerts", "downAlerts", "upAlerts", "rawAlerts",
+			},
+		},
+	}
+
+	data, err := os.ReadFile("openapi.yaml")
+	require.NoError(t, err, "openapi.yaml must exist")
+	var spec map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &spec))
+	components, ok := spec["components"].(map[string]any)
+	require.True(t, ok)
+	schemas, ok := components["schemas"].(map[string]any)
+	require.True(t, ok)
+
+	for _, tc := range cases {
+		t.Run(tc.schema, func(t *testing.T) {
+			schemaObj, ok := schemas[tc.schema].(map[string]any)
+			require.True(t, ok, "schema %q must exist in components.schemas", tc.schema)
+			props, ok := schemaObj["properties"].(map[string]any)
+			require.True(t, ok, "%s must have a properties map", tc.schema)
+			for _, field := range tc.fields {
+				require.Contains(t, props, field,
+					"%s: Go json tag %q has no matching property in spec; update openapi.yaml when renaming fields",
+					tc.schema, field)
+			}
+		})
 	}
 }
 
