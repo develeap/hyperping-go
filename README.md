@@ -13,6 +13,53 @@ Used as the shared HTTP client by:
 go get github.com/develeap/hyperping-go@latest
 ```
 
+## CLI
+
+The `hyp` binary is a standalone CLI for Hyperping. No Python runtime required.
+
+**Homebrew (macOS / Linux):**
+
+```bash
+brew install develeap/tap/hyp
+```
+
+**Go install:**
+
+```bash
+go install github.com/develeap/hyperping-go/cmd/hyp@latest
+```
+
+**Direct download:** grab the pre-built binary for your platform from the [GitHub releases page](https://github.com/develeap/hyperping-go/releases).
+
+### CLI Usage
+
+```bash
+# Authentication: set once, use everywhere
+export HYPERPING_API_KEY=sk_your_api_key
+
+# Monitors
+hyp monitor list
+hyp monitor pause  <uuid>
+hyp monitor resume <uuid>
+
+# Incidents
+hyp incident create --title "Elevated error rate" --text "p95 latency spiked" \
+  --type monitoring --statuspage <uuid>
+hyp incident resolve <uuid> --message "All clear"
+
+# Status pages
+hyp statuspage list
+hyp statuspage show <uuid>
+
+# Version info
+hyp version
+
+# Global flags (available on every subcommand)
+hyp --api-key sk_...  monitor list   # override env var
+hyp --output json     monitor list   # machine-readable JSON
+hyp --base-url http://localhost:8080 monitor list
+```
+
 ## Usage
 
 ```go

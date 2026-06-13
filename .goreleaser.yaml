@@ -1,0 +1,52 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/hyp
+    binary: hyp
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+archives:
+  - name_template: "hyp_{{.Os}}_{{.Arch}}"
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore\\(deps\\):"
+
+brews:
+  - name: hyp
+    homepage: https://github.com/develeap/hyperping-go
+    description: CLI for Hyperping uptime monitoring (monitor, incident, statuspage)
+    repository:
+      owner: develeap
+      name: homebrew-tap
+    install: |
+      bin.install "hyp"
+    test: |
+      system "#{bin}/hyp", "version"
