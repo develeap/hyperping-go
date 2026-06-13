@@ -3,7 +3,10 @@
 
 package hyperping
 
-import "context"
+import (
+	"context"
+	"iter"
+)
 
 // MonitorAPI defines the interface for monitor operations.
 // This interface enables mocking in unit tests.
@@ -15,6 +18,7 @@ type MonitorAPI interface {
 	DeleteMonitor(ctx context.Context, uuid string) error
 	PauseMonitor(ctx context.Context, uuid string) (*Monitor, error)
 	ResumeMonitor(ctx context.Context, uuid string) (*Monitor, error)
+	IterMonitors(ctx context.Context) iter.Seq2[Monitor, error]
 }
 
 // IncidentAPI defines the interface for incident operations.
@@ -27,6 +31,7 @@ type IncidentAPI interface {
 	DeleteIncident(ctx context.Context, id string) error
 	AddIncidentUpdate(ctx context.Context, uuid string, req AddIncidentUpdateRequest) (*Incident, error)
 	ResolveIncident(ctx context.Context, uuid string, message string) (*Incident, error)
+	IterIncidents(ctx context.Context) iter.Seq2[Incident, error]
 }
 
 // MaintenanceAPI defines the interface for maintenance operations.
@@ -83,6 +88,7 @@ type StatusPageAPI interface {
 	GetSubscriber(ctx context.Context, statuspageID string, subscriberID int) (*StatusPageSubscriber, error)
 	AddSubscriber(ctx context.Context, uuid string, req AddSubscriberRequest) (*StatusPageSubscriber, error)
 	DeleteSubscriber(ctx context.Context, uuid string, subscriberID int) error
+	IterStatusPages(ctx context.Context, search *string) iter.Seq2[StatusPage, error]
 }
 
 // HyperpingAPI combines all API interfaces for the Hyperping client.
