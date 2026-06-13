@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `WithTracerProvider(tp)` client option for OpenTelemetry distributed tracing on REST calls
+- `WithMCPTracerProvider(tp)` transport option for OpenTelemetry tracing on MCP `tools/call`
+
 ## [0.7.1] - 2026-06-09
 
 ### Fixed
