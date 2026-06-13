@@ -129,6 +129,56 @@ func (m *MockMonitorAPI) ListMonitors(ctx context.Context) ([]hyperping.Monitor,
 }
 ```
 
+## hyp CLI
+
+`hyp` is a standalone CLI binary built from `cmd/hyp`. It mirrors the Python CLI
+for operators who prefer a native binary with no runtime dependency.
+
+### Install
+
+```bash
+# Homebrew (macOS and Linux)
+brew install develeap/tap/hyp
+
+# Or download a release binary from GitHub Releases
+```
+
+### Usage
+
+```bash
+# Set your API key
+export HYPERPING_API_KEY=sk_your_api_key
+
+# List monitors
+hyp monitor list
+
+# Pause / resume a monitor
+hyp monitor pause mon_abc123
+hyp monitor resume mon_abc123
+
+# Create and resolve incidents
+hyp incident create --title "DB outage" --type outage --statuspage sp_xyz
+hyp incident resolve inci_abc123 --message "All systems operational"
+
+# List and inspect status pages
+hyp statuspage list
+hyp statuspage show sp_xyz
+
+# Onboard a new tenant (creates status page and monitors in one step)
+hyp tenant onboard "Acme Corp" \
+  --monitor-url https://acme.com \
+  --monitor-url https://api.acme.com
+
+# JSON output (works on all commands)
+hyp monitor list --output json
+```
+
+### Build from source
+
+```bash
+go build ./cmd/hyp/
+```
+
 ## License
 
 MIT. Maintained by [Develeap](https://develeap.com).
