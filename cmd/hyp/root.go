@@ -50,6 +50,7 @@ func newRootCmd(version, commit, date string) *cobra.Command {
 	root.AddCommand(newMonitorCmd(state))
 	root.AddCommand(newIncidentCmd(state))
 	root.AddCommand(newStatuspageCmd(state))
+	root.AddCommand(newTenantCmd(state))
 
 	return root
 }
