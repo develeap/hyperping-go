@@ -635,3 +635,42 @@ func TestCreateStatusPageService_Description_JSON(t *testing.T) {
 		}
 	})
 }
+
+func TestUpdateStatusPageRequest_MonitorsJSON(t *testing.T) {
+	t.Run("monitors omitted when nil", func(t *testing.T) {
+		req := UpdateStatusPageRequest{}
+		b, err := json.Marshal(req)
+		if err != nil {
+			t.Fatalf("marshal error: %v", err)
+		}
+		if strings.Contains(string(b), "monitors") {
+			t.Errorf("expected monitors to be omitted, got: %s", b)
+		}
+	})
+
+	t.Run("monitors included when set", func(t *testing.T) {
+		req := UpdateStatusPageRequest{Monitors: []string{"mon_001", "mon_002"}}
+		b, err := json.Marshal(req)
+		if err != nil {
+			t.Fatalf("marshal error: %v", err)
+		}
+		if !strings.Contains(string(b), `"monitors"`) {
+			t.Errorf("expected monitors in JSON, got: %s", b)
+		}
+	})
+
+	t.Run("round-trip preserves monitors", func(t *testing.T) {
+		sp := StatusPage{UUID: "sp_001", Monitors: []string{"mon_001"}}
+		b, err := json.Marshal(sp)
+		if err != nil {
+			t.Fatalf("marshal error: %v", err)
+		}
+		var sp2 StatusPage
+		if err := json.Unmarshal(b, &sp2); err != nil {
+			t.Fatalf("unmarshal error: %v", err)
+		}
+		if len(sp2.Monitors) != 1 || sp2.Monitors[0] != "mon_001" {
+			t.Errorf("round-trip failed, got monitors: %v", sp2.Monitors)
+		}
+	})
+}
