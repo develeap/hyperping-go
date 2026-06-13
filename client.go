@@ -650,14 +650,14 @@ func (c *Client) parseErrorResponse(statusCode int, headers http.Header, body []
 		apiErr.Details = errResp.Details
 	}
 
-	switch {
-	case statusCode == http.StatusTooManyRequests:
+	switch statusCode {
+	case http.StatusTooManyRequests:
 		return &HyperpingRateLimitError{RequestID: requestID, RetryAfter: apiErr.RetryAfter, apiError: apiErr}
-	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
+	case http.StatusUnauthorized, http.StatusForbidden:
 		return &HyperpingAuthError{RequestID: requestID, apiError: apiErr}
-	case statusCode == http.StatusNotFound:
+	case http.StatusNotFound:
 		return &HyperpingNotFoundError{RequestID: requestID, apiError: apiErr}
-	case statusCode == http.StatusBadRequest || statusCode == http.StatusUnprocessableEntity:
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		return &HyperpingValidationError{RequestID: requestID, Details: apiErr.Details, apiError: apiErr}
 	default:
 		return apiErr
