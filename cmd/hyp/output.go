@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"text/tabwriter"
 )
 
@@ -37,9 +36,3 @@ func writeJSON(w io.Writer, v interface{}) error {
 	return enc.Encode(v)
 }
 
-func writeJSONOrDie(v interface{}) {
-	if err := writeJSON(os.Stdout, v); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-}
