@@ -15,6 +15,9 @@ const (
 
 	// HeaderAccept is the Accept HTTP header.
 	HeaderAccept = "Accept"
+
+	// requestIDHeader is the response header Hyperping uses for request correlation.
+	requestIDHeader = "X-Request-Id"
 )
 
 // Content type values.

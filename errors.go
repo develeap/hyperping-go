@@ -243,3 +243,47 @@ func IsServerError(err error) bool {
 func IsCircuitBreakerOpen(err error) bool {
 	return errors.Is(err, gobreaker.ErrOpenState)
 }
+
+// HyperpingRateLimitError is returned when the API responds with 429 Too Many Requests.
+// RequestID is the X-Request-Id from the response header.
+// RetryAfter is the number of seconds the caller should wait before retrying.
+type HyperpingRateLimitError struct {
+	RequestID  string
+	RetryAfter int
+	apiError   *APIError
+}
+
+func (e *HyperpingRateLimitError) Error() string { return e.apiError.Error() }
+func (e *HyperpingRateLimitError) Unwrap() error  { return e.apiError }
+
+// HyperpingAuthError is returned when the API responds with 401 Unauthorized or 403 Forbidden.
+// RequestID is the X-Request-Id from the response header.
+type HyperpingAuthError struct {
+	RequestID string
+	apiError  *APIError
+}
+
+func (e *HyperpingAuthError) Error() string { return e.apiError.Error() }
+func (e *HyperpingAuthError) Unwrap() error  { return e.apiError }
+
+// HyperpingNotFoundError is returned when the API responds with 404 Not Found.
+// RequestID is the X-Request-Id from the response header.
+type HyperpingNotFoundError struct {
+	RequestID string
+	apiError  *APIError
+}
+
+func (e *HyperpingNotFoundError) Error() string { return e.apiError.Error() }
+func (e *HyperpingNotFoundError) Unwrap() error  { return e.apiError }
+
+// HyperpingValidationError is returned when the API responds with 400 Bad Request
+// or 422 Unprocessable Entity. RequestID is the X-Request-Id from the response header.
+// Details contains field-level validation errors when the API provides them.
+type HyperpingValidationError struct {
+	RequestID string
+	Details   []ValidationDetail
+	apiError  *APIError
+}
+
+func (e *HyperpingValidationError) Error() string { return e.apiError.Error() }
+func (e *HyperpingValidationError) Unwrap() error  { return e.apiError }
