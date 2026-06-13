@@ -2,8 +2,6 @@ module github.com/develeap/hyperping-go/tools/cmd/scraper
 
 go 1.26.2
 
-toolchain go1.26.2
-
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/getkin/kin-openapi v0.140.0
