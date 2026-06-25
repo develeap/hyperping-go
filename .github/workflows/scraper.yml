@@ -104,7 +104,7 @@ jobs:
         if: env.EXIT_CODE == '0'
         run: |
           export GOTOOLCHAIN=auto
-          go install github.com/oasdiff/oasdiff/cmd/oasdiff@v1.18.4
+          go install github.com/oasdiff/oasdiff@v1.18.4
 
       - name: Diff latest snapshot against canonical spec
         if: env.EXIT_CODE == '0'
